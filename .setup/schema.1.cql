@@ -36,67 +36,76 @@ create table outcomes (
   primary key((outcome), sink, url, created)
 );
 
---This should only be written to once
-create table acquisitions (
-  vid text, --visitor-id
+--This should only be written to once a user first visits (vid==sid)
+create table visitors (
+  vid timeuuid, --visitor-id
   sid timeuuid, --session-id
-  eid text, --event-id, AKA content (also action in params) ex. Clicked button A
-  etyp text, --event-type/page-type
-  created timestamp, --where they are in user flow
+  app text, --app version
+  created timestamp, --time.Now().UTC() on server
   uid text, --user-id
-  last text, --last action/slug/url (what i just clicked on)
-  next text, --next action/slug/url (set to null each action, nulls indicate lost interest or bad ux)
+  last text, --last action/slug/url/referrer_url (what i just clicked on)
+  url text, --this should always be url slug of current url
+  ip text, --ip
+  latlon frozen<geo_point>, --location
+  ptype text, --page category/type 
+  bhash text, --browser-hash
+  --Experiment Fields
+  xid text, --experiment id
+  split text, --experiment split A/B
+  ename text, ----event name e.g. "signup_attempt", event-id/event-name, AKA content (also action in params) ex. Clicked button A, joined-experiment-now
+  etyp text, --event-type/page-type
   sink text, --local-optimum/experiment
   ver int, --sink version/variation
   score double, --score
-  params map<text,text>, --all experiment params, (include global-optimum-experimentid[outcome], a/b[type])
-  duration bigint, --time since last click
-  ip text, --ip
-  latlon frozen<geo_point>, --location
+  params map<text,text>, --all additional experiment params, (include global-optimum-experimentid[outcome], a/b[type])
   --Detail Fields
   country text, --ISO-2
   culture text, --EN-US
-  source text, --referring domain, user, service
-  medium text, --email,sms,ad,etc
-  campaign text, --marketing campaign name  
-  device text, 
+  source text, --referring domain, user, service [sms]
+  medium text, --email,sms,ad,etc [invite]
+  campaign text, --marketing campaign name [chat_invite] 
+  ref text, --referrer uid
+  aid text, --affiliate id
   browser text,
+  device text, 
   os text,  
   tz text,
   vp frozen<viewport>,
-  --TODO: Add your own variables here or in params
-  --[Optional/Updateable]
-  -- email text, --when we got their email EXCEPTION TO THE RULE OF WRITE ONCE
-  -- gender text,
-
   PRIMARY KEY ((vid))
 );
 
---Session starts
-create table starts (
-  vid text, 
+--Session-starts written to once a user first starts a session
+create table sessions (
+  vid timeuuid, 
   sid timeuuid, 
-  eid text, 
-  etyp text,
+  app text,
   created timestamp, 
   uid text, 
   last text, 
-  next text, 
-  sink text,
-  ver int, 
-  score double,
-  params map<text,text>, 
-  duration bigint,
+  url text, 
   ip text,
   latlon frozen<geo_point>,
+  ptype text, 
+  bhash text, 
+  --Experiment Fields
+  xid text, 
+  split text, 
+  ename text, 
+  etyp text, 
+  sink text, 
+  ver int,
+  score double, 
+  params map<text,text>, 
   --Detail Fields
   country text, 
   culture text, 
   source text,
   medium text,
   campaign text,
-  device text, 
+  ref text, 
+  aid text,
   browser text,
+  device text, 
   os text,  
   tz text,
   vp frozen<viewport>,
@@ -105,48 +114,33 @@ create table starts (
 WITH CLUSTERING ORDER BY (sid DESC);
 
 create table events (
-  vid text, 
+  vid timeuuid, 
   sid timeuuid, 
-  eid text,
-  etyp text, 
+  app text,
   created timestamp, 
   uid text, 
   last text, 
-  next text,   
-  sink text, 
-  ver int, 
-  score double, 
-  params map<text,text>, --filter? experiment params, (global-optimum-experimentid[outcome], a/b[type])
-  duration bigint, 
+  url text, --current url slug
   ip text, 
   latlon frozen<geo_point>, 
+  ptype text, 
+  bhash text, 
+  duration bigint,  --time since last click
+  --Experiment Fields
+  xid text, 
+  split text, 
+  ename text, 
+  etyp text, 
+  sink text, 
+  ver int,
+  score double, 
+  params map<text,text>, 
   PRIMARY KEY ((vid, sid), created) --perhaps move sid from ck into pk
 )
 WITH CLUSTERING ORDER BY (created DESC);
 
---Session ends
-create table ends (
-  vid text, 
-  sid timeuuid, 
-  eid text, 
-  etyp text,
-  created timestamp, 
-  uid text, 
-  last text, 
-  next text, 
-  sink text,
-  ver int, 
-  score double,
-  params map<text,text>, 
-  duration bigint,
-  ip text,
-  latlon frozen<geo_point>,
-  PRIMARY KEY ((vid), sid)
-)
-WITH CLUSTERING ORDER BY (sid DESC);
-
 create table nodes (
-  vid text, 
+  vid timeuuid, 
   uid text,
   ip text,
   sid timeuuid, 
@@ -154,7 +148,7 @@ create table nodes (
 );
 
 create table locations (
-  vid text, 
+  vid timeuuid, 
   latlon frozen<geo_point>,
   uid text,
   sid timeuuid, 
@@ -162,7 +156,7 @@ create table locations (
 );
 
 create table aliases (
-  vid text,
+  vid timeuuid,
   uid text, 
   sid timeuuid, 
   PRIMARY KEY ((vid), uid)
@@ -170,7 +164,7 @@ create table aliases (
 
 create table users (
   uid text,
-  vid text,   
+  vid timeuuid,   
   sid timeuuid, 
   PRIMARY KEY ((uid), vid)
 );
@@ -196,7 +190,7 @@ create table ips (
 );
 
 create table reqs (  
-  vid text, 
+  vid timeuuid, 
   total counter,
   primary key((vid)) 
 );
@@ -215,7 +209,13 @@ create table referrers (
 
 create table referrals (
   ref text, --referrer uid, also external. EX. magazine
-  vid text, 
+  vid timeuuid, 
+  primary key((vid)) 
+);
+
+create table affiliates (
+  aid text, --referrer uid, also external. EX. magazine
+  vid timeuuid, 
   primary key((vid)) 
 );
 
