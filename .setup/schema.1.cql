@@ -4,7 +4,7 @@
 -- See LICENSE
 
 -- SFPLA
-drop keyspace sfpla;
+--drop keyspace sfpla;
 create keyspace sfpla WITH REPLICATION = {  'class':'NetworkTopologyStrategy', 'DC1':'1' }; --analytics
 
 use sfpla;
@@ -27,6 +27,7 @@ create type viewport (
 );
 
 
+--how many successful outcomes/intentions/local optimizations this day
 create table outcomes (
   outcome text,
   sink text,
@@ -36,36 +37,38 @@ create table outcomes (
   primary key((outcome), sink, url, created)
 );
 
---This should only be written to once a user first visits (vid==sid)
+--This should only be written to once a user first visits (vid==sid), AKA acquisitions
 create table visitors (
   vid timeuuid, --visitor-id
   sid timeuuid, --session-id
-  app text, --app version
+  app text, --app/release version
   created timestamp, --time.Now().UTC() on server
-  uid text, --user-id
+  uid uuid, --user-id
   last text, --last action/slug/url/referrer_url (what i just clicked on)
-  url text, --this should always be url slug of current url
-  ip text, --ip
+  url text, --this should always be url slug of **current** url
+  ip text, --client ip
   latlon frozen<geo_point>, --location
   ptype text, --page category/type 
   bhash text, --browser-hash
+  auth uuid, --author of **destination** content
   --Experiment Fields
-  xid text, --experiment id
-  split text, --experiment split A/B
-  ename text, ----event name e.g. "signup_attempt", event-id/event-name, AKA content (also action in params) ex. Clicked button A, joined-experiment-now
-  etyp text, --event-type/page-type
-  sink text, --local-optimum/experiment
-  ver int, --sink version/variation
-  score double, --score
-  params map<text,text>, --all additional experiment params, (include global-optimum-experimentid[outcome], a/b[type])
-  --Detail Fields
+  xid text, --primary experiment id, hypothesis
+  split text, --primary experiment split A/B
+  ename text, ----event name e.g. "signup_attempt", event-id/event-name, AKA utm_content, AKA action in params ex. Clicked button A, joined-experiment-now
+  etyp text, --event-type
+  ver int, --experiment/sink version/variation
+  sink text, --local-optimum/intention, Ex. want user to sign up for offer X
+  score double, --score (where user is in sink/intention)
+  params map<text,text>, --all additional experiment params, (include global-optimum-experimentid[outcome], a/b[type], etc)
+  --Landing Fields
   country text, --ISO-2
   culture text, --EN-US
-  source text, --referring domain, user, service [sms]
-  medium text, --email,sms,ad,etc [invite]
-  campaign text, --marketing campaign name [chat_invite] 
-  ref text, --referrer uid
-  aid text, --affiliate id
+  source text, --referring domain, user, service [sms] AKA utm_source
+  medium text, --email,sms,ad,etc [invite] AKA utm_medium
+  campaign text, --marketing campaign name [chat_invite] AKA utm_campaign
+  term text, --seo search query term AKA utm_term
+  ref uuid, --referrer uid
+  aff text, --affiliate id, promo-code
   browser text,
   device text, 
   os text,  
@@ -74,36 +77,39 @@ create table visitors (
   PRIMARY KEY ((vid))
 );
 
---Session-starts written to once a user first starts a session
+--Session-starts written to once a user first starts a session, AKA session-starts
 create table sessions (
   vid timeuuid, 
   sid timeuuid, 
   app text,
   created timestamp, 
-  uid text, 
+  uid uuid, 
   last text, 
   url text, 
   ip text,
   latlon frozen<geo_point>,
   ptype text, 
   bhash text, 
+  auth uuid, 
+  duration bigint,  --time since last click/session
   --Experiment Fields
   xid text, 
   split text, 
   ename text, 
-  etyp text, 
+  etyp text,
+  ver int, 
   sink text, 
-  ver int,
   score double, 
   params map<text,text>, 
-  --Detail Fields
+  --Landing Fields
   country text, 
   culture text, 
   source text,
   medium text,
   campaign text,
-  ref text, 
-  aid text,
+  term text, 
+  ref uuid, 
+  aff text,
   browser text,
   device text, 
   os text,  
@@ -118,30 +124,33 @@ create table events (
   sid timeuuid, 
   app text,
   created timestamp, 
-  uid text, 
+  uid uuid, 
   last text, 
-  url text, --current url slug
+  url text, 
   ip text, 
   latlon frozen<geo_point>, 
   ptype text, 
   bhash text, 
-  duration bigint,  --time since last click
+  auth uuid, 
+  duration bigint,  
   --Experiment Fields
   xid text, 
   split text, 
   ename text, 
   etyp text, 
-  sink text, 
   ver int,
+  sink text, 
   score double, 
-  params map<text,text>, 
+  params   map<text,text>, 
+  --Page Fields
+  targets  map<text,frozen<set<text>>>, --type, components viewed on page/server to see whats working. Ex. {{videos : {"1.mov"}}, {ads: {"intro1", "book", "test"}}
   PRIMARY KEY ((vid, sid), created) --perhaps move sid from ck into pk
 )
 WITH CLUSTERING ORDER BY (created DESC);
 
 create table nodes (
   vid timeuuid, 
-  uid text,
+  uid uuid,
   ip text,
   sid timeuuid, 
   PRIMARY KEY ((vid), ip)
@@ -150,20 +159,20 @@ create table nodes (
 create table locations (
   vid timeuuid, 
   latlon frozen<geo_point>,
-  uid text,
+  uid uuid,
   sid timeuuid, 
   PRIMARY KEY ((vid, latlon))
 );
 
 create table aliases (
   vid timeuuid,
-  uid text, 
+  uid uuid, 
   sid timeuuid, 
   PRIMARY KEY ((vid), uid)
 );
 
 create table users (
-  uid text,
+  uid uuid,
   vid timeuuid,   
   sid timeuuid, 
   PRIMARY KEY ((uid), vid)
@@ -196,9 +205,10 @@ create table reqs (
 );
 
 create table browsers (
+  bhash text,
   browser text, --user-agent
   total counter,
-  primary key(browser)
+  primary key((bhash), browser)
 );
 
 create table referrers (
@@ -208,13 +218,14 @@ create table referrers (
 );
 
 create table referrals (
-  ref text, --referrer uid, also external. EX. magazine
+  ref uuid, --referrer uid
   vid timeuuid, 
+  gen int, --growth loop / generation
   primary key((vid)) 
 );
 
 create table affiliates (
-  aid text, --referrer uid, also external. EX. magazine
+  aff text, --external. EX. magazine
   vid timeuuid, 
   primary key((vid)) 
 );
@@ -237,7 +248,7 @@ create table logs (
   name text, 
   host text, 
   hostname text, 
-  owner text,
+  owner uuid,
   ip text,
   level int, 
   msg text,
