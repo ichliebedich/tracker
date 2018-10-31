@@ -48,6 +48,7 @@ jq -r --argjson TRACKER_NATS_HOSTS $TRACKER_NATS_HOSTS '(.Consume[] | select(.Se
 mv -f $TMP_FILE $CONFIG_FILE
 
 #TODO: modify the new 'UrlPrefixFilter'
+#TODO: modify the new 'DefaultRedirect'
 
 ######
 # start supervisor

@@ -14,11 +14,18 @@
     "ProxyDailyLimit" : 0,
     "ProxyDailyLimitChecker" : "cassandra",
     "MaximumConnections": 2000,
-    "Debug" : true,
+    "ReadTimeoutSeconds" : 20,
+    "ReadHeaderTimeoutSeconds" : 20,
+    "WriteTimeoutSeconds" : 20,
+    "IdleTimeoutSeconds" : 20,
+    "MaxHeaderBytes" : 1048576,
+    "DefaultRedirect": "https://staging.homodea.com",
+    "Debug" : false,
     "UrlPrefixFilter" : "http(s|)://(localhost|tracker\\.staging\\.homodea\\.com)(:[0-9]*|)(/.*)",
     "Notify": [
         {
             "Service": "cassandra",
+            "Connections" : 2,
             "Hosts": [
                 "cassandra-seed1"
             ],
