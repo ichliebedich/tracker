@@ -25,7 +25,7 @@
     "Notify": [
         {
             "Service": "cassandra",
-            "Connections" : 2,
+            "Connections" : 9,
             "Hosts": [
                 "cassandra-seed1"
             ],
