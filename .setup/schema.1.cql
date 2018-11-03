@@ -43,7 +43,7 @@ create table visitors (
   sid timeuuid, --session-id
   app text, --app/release version
   created timestamp, --time.Now().UTC() on server
-  username text, --user-id
+  uname text, --user-id
   last text, --last action/slug/url/referrer_url (what i just clicked on)
   url text, --this should always be url slug of **current** url
   ip text, --client ip
@@ -83,7 +83,7 @@ create table sessions (
   sid timeuuid, 
   app text,
   created timestamp, 
-  username text, 
+  uname text, 
   last text, 
   url text, 
   ip text,
@@ -124,7 +124,7 @@ create table events (
   sid timeuuid, 
   app text,
   created timestamp, 
-  username text, 
+  uname text, 
   last text, 
   url text, 
   ip text, 
@@ -150,7 +150,7 @@ WITH CLUSTERING ORDER BY (created DESC);
 
 create table nodes (
   vid timeuuid, 
-  username text,
+  uname text,
   ip text,
   sid timeuuid, 
   PRIMARY KEY ((vid), ip)
@@ -159,23 +159,23 @@ create table nodes (
 create table locations (
   vid timeuuid, 
   latlon frozen<geo_point>,
-  username text,
+  uname text,
   sid timeuuid, 
   PRIMARY KEY ((vid, latlon))
 );
 
 create table aliases (
   vid timeuuid,
-  username text, 
+  uname text, 
   sid timeuuid, 
-  PRIMARY KEY ((vid), username)
+  PRIMARY KEY ((vid), uname)
 );
 
 create table users (
-  username text,
+  uname text,
   vid timeuuid,   
   sid timeuuid, 
-  PRIMARY KEY ((username), vid)
+  PRIMARY KEY ((uname), vid)
 );
 
 create table dailies (  
