@@ -43,14 +43,14 @@ create table visitors (
   sid timeuuid, --session-id
   app text, --app/release version
   created timestamp, --time.Now().UTC() on server
-  uname text, --user-id
+  uid uuid, --user-id
   last text, --last action/slug/url/referrer_url (what i just clicked on)
   url text, --this should always be url slug of **current** url
   ip text, --client ip
   latlon frozen<geo_point>, --location
   ptype text, --page category/type 
   bhash text, --browser-hash
-  auth text, --author of **destination** content
+  auth uuid, --author of **destination** content
   --Experiment Fields
   xid text, --primary experiment id, hypothesis
   split text, --primary experiment split A/B
@@ -67,7 +67,7 @@ create table visitors (
   medium text, --email,sms,ad,etc [invite] AKA utm_medium
   campaign text, --marketing campaign name [chat_invite] AKA utm_campaign
   term text, --seo search query term AKA utm_term
-  ref text, --referrer username
+  ref uuid, --referrer uid
   aff text, --affiliate id, promo-code
   browser text,
   device text, 
@@ -83,14 +83,14 @@ create table sessions (
   sid timeuuid, 
   app text,
   created timestamp, 
-  uname text, 
+  uid uuid, 
   last text, 
   url text, 
   ip text,
   latlon frozen<geo_point>,
   ptype text, 
   bhash text, 
-  auth text, 
+  auth uuid, 
   duration bigint,  --time since last click/session
   --Experiment Fields
   xid text, 
@@ -108,7 +108,7 @@ create table sessions (
   medium text,
   campaign text,
   term text, 
-  ref text, 
+  ref uuid, 
   aff text,
   browser text,
   device text, 
@@ -124,14 +124,14 @@ create table events (
   sid timeuuid, 
   app text,
   created timestamp, 
-  uname text, 
+  uid uuid, 
   last text, 
   url text, 
   ip text, 
   latlon frozen<geo_point>, 
   ptype text, 
   bhash text, 
-  auth text, 
+  auth uuid, 
   duration bigint,  
   --Experiment Fields
   xid text, 
@@ -150,7 +150,7 @@ WITH CLUSTERING ORDER BY (created DESC);
 
 create table nodes (
   vid timeuuid, 
-  uname text,
+  uid uuid,
   ip text,
   sid timeuuid, 
   PRIMARY KEY ((vid), ip)
@@ -159,23 +159,23 @@ create table nodes (
 create table locations (
   vid timeuuid, 
   latlon frozen<geo_point>,
-  uname text,
+  uid uuid,
   sid timeuuid, 
   PRIMARY KEY ((vid, latlon))
 );
 
 create table aliases (
   vid timeuuid,
-  uname text, 
+  uid uuid, 
   sid timeuuid, 
-  PRIMARY KEY ((vid), uname)
+  PRIMARY KEY ((vid), uid)
 );
 
 create table users (
-  uname text,
+  uid uuid,
   vid timeuuid,   
   sid timeuuid, 
-  PRIMARY KEY ((uname), vid)
+  PRIMARY KEY ((uid), vid)
 );
 
 create table dailies (  
@@ -218,7 +218,7 @@ create table referrers (
 );
 
 create table referrals (
-  ref text, --referrer username
+  ref uuid, --referrer uid
   vid timeuuid, 
   gen int, --growth loop / generation
   primary key((vid)) 
@@ -248,7 +248,7 @@ create table logs (
   name text, 
   host text, 
   hostname text, 
-  owner text,
+  owner uuid,
   ip text,
   level int, 
   msg text,

@@ -383,7 +383,7 @@ func (i *CassandraService) write(w *WriteArgs) error {
 							sid, 
 							app,
 							created,
-							uname,
+							uid,
                             last,
 							url,
 							ip,
@@ -418,7 +418,7 @@ func (i *CassandraService) write(w *WriteArgs) error {
 				v["sid"],
 				v["app"],
 				updated,
-				v["uname"],
+				v["uid"],
 				v["last"],
 				v["url"],
 				w.IP,
@@ -457,7 +457,7 @@ func (i *CassandraService) write(w *WriteArgs) error {
 							sid, 
 							app,
 							created,
-							uname,
+							uid,
                             last,
 							url,
 							ip,
@@ -493,7 +493,7 @@ func (i *CassandraService) write(w *WriteArgs) error {
 				v["sid"],
 				v["app"],
 				updated,
-				v["uname"],
+				v["uid"],
 				v["last"],
 				v["url"],
 				w.IP,
@@ -534,7 +534,7 @@ func (i *CassandraService) write(w *WriteArgs) error {
 				sid, 
 				app,
 				created,
-				uname,
+				uid,
 				last,
 				url,
 				ip,
@@ -558,7 +558,7 @@ func (i *CassandraService) write(w *WriteArgs) error {
 			v["sid"],
 			v["app"],
 			updated,
-			v["uname"],
+			v["uid"],
 			v["last"],
 			v["url"],
 			w.IP,
@@ -583,13 +583,13 @@ func (i *CassandraService) write(w *WriteArgs) error {
 		if xerr := i.Session.Query(`INSERT into nodes 
 			(
 				vid, 
-				uname,
+				uid,
 				ip,
 				sid
 			) 
 			values (?,?,?,?)`, //4
 			v["vid"],
-			v["uname"],
+			v["uid"],
 			w.IP,
 			v["sid"]).Exec(); xerr != nil && i.AppConfig.Debug {
 			fmt.Println("C*[nodes]:", xerr)
@@ -601,45 +601,45 @@ func (i *CassandraService) write(w *WriteArgs) error {
 					(
 						vid, 
 						latlon,
-						uname,
+						uid,
 						sid
 					) 
 					values (?,?,?,?)`, //4
 				v["vid"],
 				&latlon,
-				v["uname"],
+				v["uid"],
 				v["sid"]).Exec(); xerr != nil && i.AppConfig.Debug {
 				fmt.Println("C*[locations]:", xerr)
 			}
 		}
 
 		//alias
-		if v["uname"] != nil {
+		if v["uid"] != nil {
 			if xerr := i.Session.Query(`INSERT into aliases 
 			(
 				vid, 
-				uname,
+				uid,
 				sid
 			) 
 			values (?,?,?)`, //3
 				v["vid"],
-				v["uname"],
+				v["uid"],
 				v["sid"]).Exec(); xerr != nil && i.AppConfig.Debug {
 				fmt.Println("C*[aliases]:", xerr)
 			}
 		}
 
 		//users
-		if v["uname"] != nil {
+		if v["uid"] != nil {
 			if xerr := i.Session.Query(`INSERT into users 
 				(
 					vid, 
-					uname,
+					uid,
 					sid
 				) 
 				values (?,?,?)`, //3
 				v["vid"],
-				v["uname"],
+				v["uid"],
 				v["sid"]).Exec(); xerr != nil && i.AppConfig.Debug {
 				fmt.Println("C*[users]:", xerr)
 			}

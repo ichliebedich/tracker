@@ -11,8 +11,8 @@ create keyspace sfplt WITH REPLICATION = {  'class':'NetworkTopologyStrategy', '
 use sfplt;
 
 create table test (
-  username text,
+  uid text,
   gender text,
   vid text,
-  PRIMARY KEY (username,vid)
+  PRIMARY KEY (uid,vid)
 );
