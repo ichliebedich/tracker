@@ -120,6 +120,7 @@ create table sessions (
 WITH CLUSTERING ORDER BY (sid DESC);
 
 create table events (
+  eid timeuuid, --event id, server generated, unique to every event
   vid timeuuid, 
   sid timeuuid, 
   app text,
@@ -142,11 +143,11 @@ create table events (
   sink text, 
   score double, 
   params   map<text,text>, 
-  --Page Fields
+  --Additional Fields
   targets  map<text,frozen<set<text>>>, --type, components viewed on page/server to see whats working. Ex. {{videos : {"1.mov"}}, {ads: {"intro1", "book", "test"}}
-  PRIMARY KEY ((vid, sid), created) --perhaps move sid from ck into pk
-)
-WITH CLUSTERING ORDER BY (created DESC);
+  reid timeuuid, --cluster based event on original/related eid
+  PRIMARY KEY (eid) --perhaps move sid from ck into pk
+);
 
 create table nodes (
   vid timeuuid, 
@@ -176,6 +177,21 @@ create table users (
   vid timeuuid,   
   sid timeuuid, 
   PRIMARY KEY ((uid), vid)
+);
+
+create table usernames (
+  uhash text,
+  vid timeuuid,   
+  sid timeuuid, 
+  PRIMARY KEY ((uhash), vid)
+);
+
+
+create table emails (
+  ehash text, --from email
+  vid timeuuid,   
+  sid timeuuid,
+  PRIMARY KEY ((ehash))
 );
 
 create table dailies (  
@@ -241,10 +257,11 @@ create table counters (
 
 -- Esp. Server Debugging
 create table logs (  
+  id timeuuid,
   ldate date,
   created timestamp,
   ltime time, --nanosecond time for detailed server debugging
-  id text, 
+  topic text, 
   name text, 
   host text, 
   hostname text, 
@@ -253,9 +270,9 @@ create table logs (
   level int, 
   msg text,
   params map<text,text>,
-  primary key((ldate), created, ltime, id) 
-)
-WITH CLUSTERING ORDER BY (created DESC); --We make an exception here for using a clustered key instead of a PK so we can do realtime debugging
+  primary key((id)) 
+);
+
 
 -- Esp. Server Debugging
 create table updates (
