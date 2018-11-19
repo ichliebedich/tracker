@@ -4,6 +4,7 @@ Track every visitor click, setup growth experiments and measure every user outco
 Don't want to give your user data to people you don't trust? Maybe save a GDPR lawsuit by using this. We've seen a marked drop in people sharing their data with Google Analytics, so this will allow you to get your own trusted statistics yourself.
 
 ## Features
+* [Tracking URL Generator](https://chrome.google.com/webstore/detail/sfpl-visitor-tracker/dhpgldichapkobbnapfikfnoegjmblpa) extension for google chrome.
 * Tracking API Calls & URLs & GET Redirects
 * Tracking Images (for Emails)
 * Reverse Proxy included (for your Node, Python, etc. API backend)
@@ -28,6 +29,10 @@ Don't want to give your user data to people you don't trust? Maybe save a GDPR l
 * Cassandra
 * Elassandra
 * NATS.io
+* Jupyter
+
+![image](https://user-images.githubusercontent.com/760216/48519797-180ffb00-e823-11e8-9bae-ed21e169d6e2.png)
+
 
 ## Todo
 * Kafka plugin
@@ -41,7 +46,9 @@ Don't want to give your user data to people you don't trust? Maybe save a GDPR l
 
 * Install Cassandra or Elassandra
 * Install Schema to Cassandra https://github.com/dioptre/tracker/blob/master/.setup/schema.1.cql
-* Install Nats
+* Insall Go > 1.9.3 (if you want to build from source)
+* Get the tracker (if you want to build from source) ```go get github.com/dioptre/tracker && go build github.com/dioptre/tracker```
+* Install Nats ```go get github.com/nats-io/gnatsd && go build github.com/nats-io/gnatsd```
 * Go through the config.json file and change what you want.
 * Deploy using Docker or ```go build```
 * Use Spark, Kibana, etc to interrogate & ETL to your warehouse

@@ -162,6 +162,9 @@ type Configuration struct {
 	Notify                   []Service
 	Consume                  []Service
 	ProxyUrl                 string
+	ProxyUrlFilter           string
+	IgnoreProxyOptions       bool
+	ProxyForceJson           bool
 	ProxyPort                string
 	ProxyPortTLS             string
 	ProxyDailyLimit          uint64
@@ -171,6 +174,7 @@ type Configuration struct {
 	ApiVersion               int
 	Debug                    bool
 	UrlPrefixFilter          string
+	AllowOrigin              string
 	FilterPrefix             bool
 	MaximumConnections       int
 	ReadTimeoutSeconds       int
@@ -256,6 +260,11 @@ func main() {
 		fmt.Println("Setting up URL prefix filter...")
 		configuration.FilterPrefix = true
 		urlPrefix, _ = regexp.Compile(configuration.UrlPrefixFilter)
+	}
+
+	////////////////////////////////////////SETUP ORIGIN
+	if configuration.AllowOrigin == "" {
+		configuration.AllowOrigin = "*"
 	}
 
 	//////////////////////////////////////// SETUP CONFIG VARIABLES
@@ -380,12 +389,25 @@ func main() {
 		director := func(req *http.Request) {
 			req.Header.Add("X-Forwarded-Host", req.Host)
 			req.Header.Add("X-Origin-Host", origin.Host)
+			if configuration.ProxyForceJson {
+				req.Header.Set("content-type", "application/json")
+			}
 			req.URL.Scheme = "http"
 			req.URL.Host = origin.Host
 		}
 		proxy := &httputil.ReverseProxy{Director: director}
-		proxyOptions := [1][2]string{{"Strict-Transport-Security", "max-age=15768000 ; includeSubDomains"}}
+		proxyFilter, _ := regexp.Compile(configuration.ProxyUrlFilter)
 		http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+			if !configuration.IgnoreProxyOptions && r.Method == http.MethodOptions {
+				//Lets just allow requests to this endpoint
+				w.Header().Set("access-control-allow-origin", configuration.AllowOrigin)
+				w.Header().Set("access-control-allow-credentials", "true")
+				w.Header().Set("access-control-allow-headers", "Authorization,Accept,X-CSRFToken,User")
+				w.Header().Set("access-control-allow-methods", "GET,POST,HEAD,PUT,DELETE")
+				w.Header().Set("access-control-max-age", "1728000")
+				w.WriteHeader(http.StatusOK)
+				return
+			}
 			//TODO: Check certificate in cookie
 			select {
 			case <-connc:
@@ -395,11 +417,14 @@ func main() {
 					w.Write([]byte(API_LIMIT_REACHED))
 					return
 				}
-				//Track
-				track(&configuration, &w, r)
 				//Proxy
-				w.Header().Set(proxyOptions[0][0], proxyOptions[0][1])
+				w.Header().Set("Strict-Transport-Security", "max-age=15768000 ; includeSubDomains")
+				w.Header().Set("access-control-allow-origin", configuration.AllowOrigin)
 				proxy.ServeHTTP(w, r)
+				//Track
+				if configuration.ProxyUrlFilter != "" && !proxyFilter.MatchString(r.URL.Path) {
+					track(&configuration, &w, r)
+				}
 				connc <- struct{}{}
 			default:
 				w.Header().Set("Retry-After", "1")
@@ -412,12 +437,14 @@ func main() {
 	http.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
 		json, _ := json.Marshal([2]KeyValue{KeyValue{Key: "client", Value: getIP(r)}, KeyValue{Key: "conns", Value: configuration.MaximumConnections - len(connc)}})
 		w.WriteHeader(http.StatusOK)
+		w.Header().Set("access-control-allow-origin", configuration.AllowOrigin)
 		w.Header().Set("Content-Type", "application/json")
 		w.Write(json)
 	})
 
 	//////////////////////////////////////// PING PONG TEST ROUTE
 	http.HandleFunc("/ping", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("access-control-allow-origin", configuration.AllowOrigin)
 		w.Write([]byte(PONG))
 	})
 
@@ -443,6 +470,7 @@ func main() {
 		case <-connc:
 			track(&configuration, &w, r)
 			w.Header().Set("content-type", "image/gif")
+			w.Header().Set("access-control-allow-origin", configuration.AllowOrigin)
 			w.Write(TRACKING_GIF)
 			connc <- struct{}{}
 		default:
@@ -458,9 +486,9 @@ func main() {
 	http.HandleFunc("/tr/"+apiVersion+"/", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodOptions {
 			//Lets just allow requests to this endpoint
-			w.Header().Set("access-control-allow-origin", "*") //TODO Security Threat
+			w.Header().Set("access-control-allow-origin", configuration.AllowOrigin)
 			w.Header().Set("access-control-allow-credentials", "true")
-			w.Header().Set("access-control-allow-headers", "Authorization,Accept")
+			w.Header().Set("access-control-allow-headers", "Authorization,Accept,User")
 			w.Header().Set("access-control-allow-methods", "GET,POST,HEAD,PUT,DELETE")
 			w.Header().Set("access-control-max-age", "1728000")
 			w.WriteHeader(http.StatusOK)
@@ -468,6 +496,7 @@ func main() {
 			select {
 			case <-connc:
 				track(&configuration, &w, r)
+				w.Header().Set("access-control-allow-origin", configuration.AllowOrigin)
 				w.WriteHeader(http.StatusOK)
 				connc <- struct{}{}
 			default:
@@ -482,9 +511,9 @@ func main() {
 	http.HandleFunc("/str/"+apiVersion+"/", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodOptions {
 			//Lets just allow requests to this endpoint
-			w.Header().Set("access-control-allow-origin", "*") //TODO Security Threat
+			w.Header().Set("access-control-allow-origin", configuration.AllowOrigin)
 			w.Header().Set("access-control-allow-credentials", "true")
-			w.Header().Set("access-control-allow-headers", "Authorization,Accept")
+			w.Header().Set("access-control-allow-headers", "Authorization,Accept,User")
 			w.Header().Set("access-control-allow-methods", "GET,POST,HEAD,PUT,DELETE")
 			w.Header().Set("access-control-max-age", "1728000")
 			w.WriteHeader(http.StatusOK)
@@ -500,8 +529,8 @@ func main() {
 				}
 				trackWithArgs(&configuration, &w, r, &wargs)
 				w.WriteHeader(http.StatusOK)
+				w.Header().Set("access-control-allow-origin", configuration.AllowOrigin)
 				json, _ := json.Marshal(wargs.EventID)
-				w.WriteHeader(http.StatusOK)
 				w.Header().Set("Content-Type", "application/json")
 				w.Write(json)
 				connc <- struct{}{}
@@ -519,7 +548,7 @@ func main() {
 		select {
 		case <-connc:
 			track(&configuration, &w, r)
-			rURL := r.URL.Query()["r"]
+			rURL := r.URL.Query()["url"]
 			if len(rURL) > 0 {
 				http.Redirect(w, r, rURL[0], http.StatusFound)
 			} else {
@@ -589,9 +618,17 @@ func trackWithArgs(c *Configuration, w *http.ResponseWriter, r *http.Request, wa
 
 	//Process
 	j := make(map[string]interface{})
+
+	//Try to get user from header or user cookie
+	userHeader := r.Header.Get("User")
+	if userHeader != "" {
+		json.Unmarshal([]byte(userHeader), &j)
+	} else if cookie, cerr := r.Cookie("user"); cerr != nil && cookie != nil {
+		json.Unmarshal([]byte(cookie.Value), &j)
+	}
 	//Try to get vid from cookie
 	cookie, cerr := r.Cookie("vid")
-	if cerr == nil {
+	if cerr == nil && cookie != nil {
 		j["vid"] = cookie.Value
 	}
 	//Path
@@ -625,6 +662,8 @@ func trackWithArgs(c *Configuration, w *http.ResponseWriter, r *http.Request, wa
 				j["params"] = strings.ToLower(string(params))
 			}
 		}
+		break
+	case http.MethodPut:
 	case http.MethodPost:
 		//Json (POST)
 		//This is fully controlled, only send what we need (inc. params)
@@ -637,12 +676,22 @@ func trackWithArgs(c *Configuration, w *http.ResponseWriter, r *http.Request, wa
 			for idx := range body {
 				body[idx] = byte(unicode.ToLower(rune(body[idx])))
 			}
-			if err := json.Unmarshal(body, &j); err != nil {
-				return fmt.Errorf("Bad JS (parse)")
+			b := make(map[string]interface{})
+			if err := json.Unmarshal(body, &b); err == nil {
+				for bpi := range b {
+					j[bpi] = b[bpi]
+				}
 			}
 		}
+		break
 	default:
 		return nil
+	}
+	_, okc := j["content"].(string)
+	_, oke := j["ename"].(string)
+	if okc && !oke {
+		j["ename"] = j["content"]
+		delete(j, "content")
 	}
 	for idx := range c.Notify {
 		s := &c.Notify[idx]
@@ -657,8 +706,12 @@ func trackWithArgs(c *Configuration, w *http.ResponseWriter, r *http.Request, wa
 	}
 	if !wargs.IsServer {
 		if vid, ok := j["vid"].(string); ok {
-			expiration := time.Now().Add(365 * 24 * time.Hour)
+			expiration := time.Now().Add(99999 * 24 * time.Hour)
 			cookie := http.Cookie{Name: "vid", Value: vid, Expires: expiration, Path: "/"}
+			http.SetCookie(*w, &cookie)
+		} else if vid, ok := j["vid"].(gocql.UUID); ok {
+			expiration := time.Now().Add(99999 * 24 * time.Hour)
+			cookie := http.Cookie{Name: "vid", Value: vid.String(), Expires: expiration, Path: "/"}
 			http.SetCookie(*w, &cookie)
 		}
 	}
