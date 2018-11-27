@@ -38,6 +38,12 @@ TMP_FILE=$(mktemp)
 jq -r --argjson TRACKER_DOMAINS $TRACKER_DOMAINS '.Domains |= $TRACKER_DOMAINS' $CONFIG_FILE > $TMP_FILE
 mv -f $TMP_FILE $CONFIG_FILE
 
+jq -r --argjson TRACKER_DEFAULT_REDIRECT $TRACKER_DEFAULT_REDIRECT '.DefaultRedirect |= $TRACKER_DEFAULT_REDIRECT' $CONFIG_FILE > $TMP_FILE
+mv -f $TMP_FILE $CONFIG_FILE
+
+jq -r --argjson TRACKER_URL_FILTER $TRACKER_URL_FILTER '.UrlFilter |= $TRACKER_URL_FILTER' $CONFIG_FILE > $TMP_FILE
+mv -f $TMP_FILE $CONFIG_FILE
+
 jq -r --argjson TRACKER_CASSANDRA_HOSTS $TRACKER_CASSANDRA_HOSTS '(.Notify[]  | select(.Service == "cassandra") | .Hosts) |= $TRACKER_CASSANDRA_HOSTS' $CONFIG_FILE > $TMP_FILE
 mv -f $TMP_FILE $CONFIG_FILE
 
@@ -46,9 +52,6 @@ mv -f $TMP_FILE $CONFIG_FILE
 
 jq -r --argjson TRACKER_NATS_HOSTS $TRACKER_NATS_HOSTS '(.Consume[] | select(.Service == "nats") | .Hosts) |= $TRACKER_NATS_HOSTS' $CONFIG_FILE > $TMP_FILE
 mv -f $TMP_FILE $CONFIG_FILE
-
-#TODO: modify the new 'UrlFilter'
-#TODO: modify the new 'DefaultRedirect'
 
 ######
 # start supervisor
