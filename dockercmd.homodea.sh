@@ -47,7 +47,7 @@ mv -f $TMP_FILE $CONFIG_FILE
 jq -r --argjson TRACKER_NATS_HOSTS $TRACKER_NATS_HOSTS '(.Consume[] | select(.Service == "nats") | .Hosts) |= $TRACKER_NATS_HOSTS' $CONFIG_FILE > $TMP_FILE
 mv -f $TMP_FILE $CONFIG_FILE
 
-#TODO: modify the new 'UrlPrefixFilter'
+#TODO: modify the new 'UrlFilter'
 #TODO: modify the new 'DefaultRedirect'
 
 ######

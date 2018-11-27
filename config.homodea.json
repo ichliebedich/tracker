@@ -14,9 +14,10 @@
     "ProxyDailyLimit" : 0,
     "ProxyDailyLimitChecker" : "cassandra",
     "IgnoreProxyOptions" : false,
-    "ProxyUrlFilter" : ".*(dontlogthese|login|css|js|json|jpeg|jpg|gif|png)",
+    "ProxyUrlFilter" : ".*(dontlogthese|login|css|js|json|jpeg|jpg|gif|png|ico)",
     "ProxyForceJson" : false,
     "MaximumConnections": 2000,
+    "PrefixPrivateHash" : "",
     "ReadTimeoutSeconds" : 20,
     "ReadHeaderTimeoutSeconds" : 20,
     "WriteTimeoutSeconds" : 20,
@@ -25,7 +26,8 @@
     "AllowOrigin": "*",
     "DefaultRedirect": "https://staging.homodea.com",
     "Debug" : false,
-    "UrlPrefixFilter" : "http(s|)://(localhost|tracker\\.staging\\.homodea\\.com)(:[0-9]*|)(/.*)",
+    "UrlFilter" : "http(s|)://(api|tr|dev|spark|)(\\.|)(staging\\.homodea\\.com|localhost)(:[0-9]*|)(/[^\\?#]*)(\\?|#|)",
+    "UrlFilterMatchGroup" : 6,
     "IgnoreQueryParamsKey" : "igqp",
     "Notify": [
         {
