@@ -59,8 +59,6 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"os"
-	"os/user"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -83,7 +81,7 @@ type session interface {
 
 type KeyValue struct {
 	Key   string
-	Value string
+	Value interface{}
 }
 
 type Field struct {
@@ -108,11 +106,12 @@ type Filter struct {
 type WriteArgs struct {
 	WriteType int
 	Values    *map[string]interface{}
-	Caller    string
+	IsServer  bool
 	IP        string
 	Browser   string
 	Language  string
 	URI       string
+	EventID   gocql.UUID
 }
 
 type Service struct {
@@ -131,6 +130,7 @@ type Service struct {
 	MessageLimit int
 	ByteLimit    int
 	Timeout      time.Duration
+	Connections  int
 
 	Consumer  bool
 	Ephemeral bool
@@ -153,25 +153,38 @@ type NatsService struct { //Implements 'session'
 }
 
 type Configuration struct {
-	Domains                []string //Domains in Trust, LetsEncrypt domains
-	StaticDirectory        string   //Static FS Directory (./public/)
-	UseLocalTLS            bool
-	TLSCert                string
-	TLSKey                 string
-	Notify                 []Service
-	Consume                []Service
-	ProxyUrl               string
-	ProxyPort              string
-	ProxyPortTLS           string
-	ProxyDailyLimit        uint64
-	ProxyDailyLimitChecker string //Service, Ex. casssandra
-	ProxyDailyLimitCheck   func(string) uint64
-	SchemaVersion          int
-	ApiVersion             int
-	Debug                  bool
-	UrlPrefixFilter        string
-	FilterPrefix           bool
-	MaximumConnections     int
+	Domains                  []string //Domains in Trust, LetsEncrypt domains
+	StaticDirectory          string   //Static FS Directory (./public/)
+	UseLocalTLS              bool
+	TLSCert                  string
+	TLSKey                   string
+	Notify                   []Service
+	Consume                  []Service
+	PrefixPrivateHash        string
+	ProxyUrl                 string
+	ProxyUrlFilter           string
+	IgnoreProxyOptions       bool
+	ProxyForceJson           bool
+	ProxyPort                string
+	ProxyPortTLS             string
+	ProxyDailyLimit          uint64
+	ProxyDailyLimitChecker   string //Service, Ex. casssandra
+	ProxyDailyLimitCheck     func(string) uint64
+	SchemaVersion            int
+	ApiVersion               int
+	Debug                    bool
+	UrlFilter                string
+	UrlFilterMatchGroup      int
+	AllowOrigin              string
+	IsUrlFiltered            bool
+	MaximumConnections       int
+	ReadTimeoutSeconds       int
+	ReadHeaderTimeoutSeconds int
+	WriteTimeoutSeconds      int
+	IdleTimeoutSeconds       int
+	MaxHeaderBytes           int
+	DefaultRedirect          string
+	IgnoreQueryParamsKey     string
 }
 
 //////////////////////////////////////// Constants
@@ -198,11 +211,12 @@ const (
 
 var (
 	// Quote Ident replacer.
-	qiReplacer          = strings.NewReplacer("\n", `\n`, `\`, `\\`, `"`, `\"`)
-	regexCount, _       = regexp.Compile(`\.count\.(.*)`)
-	regexUpdate, _      = regexp.Compile(`\.update\.(.*)`)
-	urlPrefix, _        = regexp.Compile(`(.*)`)
-	regexInternalURI, _ = regexp.Compile(`.*(/tr/|/img/|/pub/).*`)
+	regexQiReplacer  = strings.NewReplacer("\n", `\n`, `\`, `\\`, `"`, `\"`)
+	regexCount       = regexp.MustCompile(`\.count\.(.*)`)
+	regexUpdate      = regexp.MustCompile(`\.update\.(.*)`)
+	regexFilterUrl   = regexp.MustCompile(`(.*)`)
+	regexInternalURI = regexp.MustCompile(`.*(/tr/|/img/|/pub/|/str/|/rdr/).*`) //TODO: MUST FILTER INTERNAL ROUTES, UPDATE IF ADDING A NEW ROUTE, PROXY OK!!!
+	regexUtmPrefix   = regexp.MustCompile(`utm_`)
 )
 
 //////////////////////////////////////// Transparent GIF
@@ -243,10 +257,15 @@ func main() {
 	}
 
 	////////////////////////////////////////SETUP FILTER
-	if configuration.UrlPrefixFilter != "" {
+	if configuration.UrlFilter != "" {
 		fmt.Println("Setting up URL prefix filter...")
-		configuration.FilterPrefix = true
-		urlPrefix, _ = regexp.Compile(configuration.UrlPrefixFilter)
+		configuration.IsUrlFiltered = true
+		regexFilterUrl, _ = regexp.Compile(configuration.UrlFilter)
+	}
+
+	////////////////////////////////////////SETUP ORIGIN
+	if configuration.AllowOrigin == "" {
+		configuration.AllowOrigin = "*"
 	}
 
 	//////////////////////////////////////// SETUP CONFIG VARIABLES
@@ -337,7 +356,12 @@ func main() {
 		Cache:      autocert.DirCache(cache),
 	}
 	server := &http.Server{ // HTTP REDIR SSL RENEW
-		Addr: proxyPortTLS,
+		Addr:              proxyPortTLS,
+		ReadTimeout:       time.Duration(configuration.ReadTimeoutSeconds) * time.Second,
+		ReadHeaderTimeout: time.Duration(configuration.ReadHeaderTimeoutSeconds) * time.Second,
+		WriteTimeout:      time.Duration(configuration.WriteTimeoutSeconds) * time.Second,
+		IdleTimeout:       time.Duration(configuration.IdleTimeoutSeconds) * time.Second,
+		MaxHeaderBytes:    configuration.MaxHeaderBytes, //1 << 20 // 1 MB
 		TLSConfig: &tls.Config{ // SEC PARAMS
 			GetCertificate:           certManager.GetCertificate,
 			PreferServerCipherSuites: true,
@@ -366,12 +390,25 @@ func main() {
 		director := func(req *http.Request) {
 			req.Header.Add("X-Forwarded-Host", req.Host)
 			req.Header.Add("X-Origin-Host", origin.Host)
+			if configuration.ProxyForceJson {
+				req.Header.Set("content-type", "application/json")
+			}
 			req.URL.Scheme = "http"
 			req.URL.Host = origin.Host
 		}
 		proxy := &httputil.ReverseProxy{Director: director}
-		proxyOptions := [1]KeyValue{{Key: "Strict-Transport-Security", Value: "max-age=15768000 ; includeSubDomains"}}
+		proxyFilter, _ := regexp.Compile(configuration.ProxyUrlFilter)
 		http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+			if !configuration.IgnoreProxyOptions && r.Method == http.MethodOptions {
+				//Lets just allow requests to this endpoint
+				w.Header().Set("access-control-allow-origin", configuration.AllowOrigin)
+				w.Header().Set("access-control-allow-credentials", "true")
+				w.Header().Set("access-control-allow-headers", "Authorization,Accept,X-CSRFToken,User")
+				w.Header().Set("access-control-allow-methods", "GET,POST,HEAD,PUT,DELETE")
+				w.Header().Set("access-control-max-age", "1728000")
+				w.WriteHeader(http.StatusOK)
+				return
+			}
 			//TODO: Check certificate in cookie
 			select {
 			case <-connc:
@@ -381,11 +418,14 @@ func main() {
 					w.Write([]byte(API_LIMIT_REACHED))
 					return
 				}
-				//Track
-				track(&configuration, w, r)
 				//Proxy
-				w.Header().Set(proxyOptions[0].Key, proxyOptions[0].Value)
+				w.Header().Set("Strict-Transport-Security", "max-age=15768000 ; includeSubDomains")
+				w.Header().Set("access-control-allow-origin", configuration.AllowOrigin)
 				proxy.ServeHTTP(w, r)
+				//Track
+				if configuration.ProxyUrlFilter != "" && !proxyFilter.MatchString(r.URL.Path) {
+					track(&configuration, &w, r)
+				}
 				connc <- struct{}{}
 			default:
 				w.Header().Set("Retry-After", "1")
@@ -396,15 +436,16 @@ func main() {
 
 	//////////////////////////////////////// STATUS TEST ROUTE
 	http.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
-		ip, _, _ := net.SplitHostPort(r.RemoteAddr)
-		json, _ := json.Marshal(&KeyValue{Key: "client", Value: ip})
+		json, _ := json.Marshal([2]KeyValue{KeyValue{Key: "client", Value: getIP(r)}, KeyValue{Key: "conns", Value: configuration.MaximumConnections - len(connc)}})
 		w.WriteHeader(http.StatusOK)
+		w.Header().Set("access-control-allow-origin", configuration.AllowOrigin)
 		w.Header().Set("Content-Type", "application/json")
 		w.Write(json)
 	})
 
 	//////////////////////////////////////// PING PONG TEST ROUTE
 	http.HandleFunc("/ping", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("access-control-allow-origin", configuration.AllowOrigin)
 		w.Write([]byte(PONG))
 	})
 
@@ -415,7 +456,7 @@ func main() {
 	http.HandleFunc(pubSlug, func(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-connc:
-			track(&configuration, w, r)
+			track(&configuration, &w, r)
 			http.StripPrefix(pubSlug, fs).ServeHTTP(w, r)
 			connc <- struct{}{}
 		default:
@@ -428,8 +469,9 @@ func main() {
 	http.HandleFunc("/img/"+apiVersion+"/", func(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-connc:
-			track(&configuration, w, r)
+			track(&configuration, &w, r)
 			w.Header().Set("content-type", "image/gif")
+			w.Header().Set("access-control-allow-origin", configuration.AllowOrigin)
 			w.Write(TRACKING_GIF)
 			connc <- struct{}{}
 		default:
@@ -445,22 +487,78 @@ func main() {
 	http.HandleFunc("/tr/"+apiVersion+"/", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodOptions {
 			//Lets just allow requests to this endpoint
-			w.Header().Set("access-control-allow-origin", "*") //TODO Security Threat
+			w.Header().Set("access-control-allow-origin", configuration.AllowOrigin)
 			w.Header().Set("access-control-allow-credentials", "true")
-			w.Header().Set("access-control-allow-headers", "Authorization,Accept")
+			w.Header().Set("access-control-allow-headers", "Authorization,Accept,User")
 			w.Header().Set("access-control-allow-methods", "GET,POST,HEAD,PUT,DELETE")
 			w.Header().Set("access-control-max-age", "1728000")
 			w.WriteHeader(http.StatusOK)
 		} else {
 			select {
 			case <-connc:
-				track(&configuration, w, r)
+				track(&configuration, &w, r)
+				w.Header().Set("access-control-allow-origin", configuration.AllowOrigin)
 				w.WriteHeader(http.StatusOK)
 				connc <- struct{}{}
 			default:
 				w.Header().Set("Retry-After", "1")
 				http.Error(w, "Maximum clients reached on this node.", http.StatusServiceUnavailable)
 			}
+		}
+
+	})
+
+	//////////////////////////////////////// Server Tracking Route
+	http.HandleFunc("/str/"+apiVersion+"/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodOptions {
+			//Lets just allow requests to this endpoint
+			w.Header().Set("access-control-allow-origin", configuration.AllowOrigin)
+			w.Header().Set("access-control-allow-credentials", "true")
+			w.Header().Set("access-control-allow-headers", "Authorization,Accept,User")
+			w.Header().Set("access-control-allow-methods", "GET,POST,HEAD,PUT,DELETE")
+			w.Header().Set("access-control-max-age", "1728000")
+			w.WriteHeader(http.StatusOK)
+		} else {
+			select {
+			case <-connc:
+				wargs := WriteArgs{
+					WriteType: WRITE_EVENT,
+					IP:        getIP(r),
+					EventID:   gocql.TimeUUID(),
+					URI:       r.RequestURI,
+					IsServer:  true,
+				}
+				trackWithArgs(&configuration, &w, r, &wargs)
+				w.WriteHeader(http.StatusOK)
+				w.Header().Set("access-control-allow-origin", configuration.AllowOrigin)
+				json, _ := json.Marshal(wargs.EventID)
+				w.Header().Set("Content-Type", "application/json")
+				w.Write(json)
+				connc <- struct{}{}
+			default:
+				w.Header().Set("Retry-After", "1")
+				http.Error(w, "Maximum clients reached on this node.", http.StatusServiceUnavailable)
+			}
+		}
+
+	})
+
+	//////////////////////////////////////// Redirect Route
+	// Ex. https://localhost:8443/rdr/v1/?r=https%3A%2F%2Fx.com
+	http.HandleFunc("/rdr/"+apiVersion+"/", func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-connc:
+			track(&configuration, &w, r)
+			rURL := r.URL.Query()["url"]
+			if len(rURL) > 0 {
+				http.Redirect(w, r, rURL[0], http.StatusFound)
+			} else {
+				http.Redirect(w, r, configuration.DefaultRedirect, http.StatusFound)
+			}
+			connc <- struct{}{}
+		default:
+			w.Header().Set("Retry-After", "1")
+			http.Error(w, "Maximum clients reached on this node.", http.StatusServiceUnavailable)
 		}
 
 	})
@@ -490,27 +588,11 @@ func main() {
 }
 
 ////////////////////////////////////////
-// cacheDir in /tmp for SSL
-////////////////////////////////////////
-func cacheDir() (dir string) {
-	if u, _ := user.Current(); u != nil {
-		dir = filepath.Join(os.TempDir(), "cache-golang-autocert-"+u.Username)
-		//dir = filepath.Join(".", "cache-golang-autocert-"+u.Username)
-		fmt.Println("Saving cache-go-lang-autocert-u.username to: ", dir)
-		if err := os.MkdirAll(dir, 0700); err == nil {
-			return dir
-		}
-	}
-	return ""
-}
-
-////////////////////////////////////////
 // Check
 ////////////////////////////////////////
 func check(c *Configuration, r *http.Request) error {
 	//Precheck
-	ip, _, _ := net.SplitHostPort(r.RemoteAddr)
-	if c.ProxyDailyLimit > 0 && c.ProxyDailyLimitCheck != nil && c.ProxyDailyLimitCheck(ip+";"+r.Header.Get("X-Forwarded-For")) > c.ProxyDailyLimit {
+	if c.ProxyDailyLimit > 0 && c.ProxyDailyLimitCheck != nil && c.ProxyDailyLimitCheck(getIP(r)) > c.ProxyDailyLimit {
 		return fmt.Errorf("API Limit Reached")
 	}
 	return nil
@@ -519,54 +601,84 @@ func check(c *Configuration, r *http.Request) error {
 ////////////////////////////////////////
 // Trace
 ////////////////////////////////////////
-func track(c *Configuration, w http.ResponseWriter, r *http.Request) error {
+func track(c *Configuration, w *http.ResponseWriter, r *http.Request) error {
 	//Setup
-	ip, _, _ := net.SplitHostPort(r.RemoteAddr)
 	wargs := WriteArgs{
 		WriteType: WRITE_EVENT,
-		Caller:    ip + ";" + r.Header.Get("X-Forwarded-For"),
-		IP:        ip,
+		IP:        getIP(r),
 		Browser:   r.Header.Get("user-agent"),
 		Language:  r.Header.Get("accept-language"),
 		URI:       r.RequestURI,
+		EventID:   gocql.TimeUUID(),
 	}
+	return trackWithArgs(c, w, r, &wargs)
+}
+
+func trackWithArgs(c *Configuration, w *http.ResponseWriter, r *http.Request, wargs *WriteArgs) error {
+	//Normalize all data TOLOWERCASE
 
 	//Process
 	j := make(map[string]interface{})
+
+	//Try to get user from header or user cookie
+	userHeader := r.Header.Get("User")
+	if userHeader != "" {
+		json.Unmarshal([]byte(userHeader), &j)
+	} else if cookie, cerr := r.Cookie("user"); cerr != nil && cookie != nil {
+		json.Unmarshal([]byte(cookie.Value), &j)
+	}
 	//Try to get vid from cookie
 	cookie, cerr := r.Cookie("vid")
-	if cerr == nil {
+	if cerr == nil && cookie != nil {
 		j["vid"] = cookie.Value
 	}
 	//Path
 	p := strings.Split(r.URL.Path, "/")
 	pmax := (len(p) - 2)
 	for i := 1; i <= pmax; i += 2 {
-		j[p[i]] = p[i+1] //TODO: Handle arrays
+		p[i] = strings.ToLower(p[i])
+		switch p[i] {
+		case "ehash", "bhash":
+			j[p[i]] = p[i+1] //TODO: Handle arrays
+			break
+		default:
+			j[p[i]] = strings.ToLower(p[i+1]) //TODO: Handle arrays
+		}
 	}
 	//Inject Params
-	temp := j["vid"]
-	delete(j, "vid")
 	if params, err := json.Marshal(j); err == nil {
-		j["params"] = string(params)
+		j["params"] = strings.ToLower(string(params))
 	}
-	j["vid"] = temp
+	wargs.Values = &j
 	switch r.Method {
 	case http.MethodGet:
 		//Query, try and get everything
 		k := r.URL.Query()
+		if c.IgnoreQueryParamsKey != "" && k[c.IgnoreQueryParamsKey] != nil {
+			break
+		}
 		qp := make(map[string]interface{})
 		for idx := range k {
-			j[idx] = k[idx][0]
-			qp[idx] = k[idx][0]
+			lidx := strings.ToLower(idx)
+			lidx = regexUtmPrefix.ReplaceAllString(lidx, "")
+			switch lidx {
+			case "ehash", "bhash":
+				j[lidx] = k[idx][0]  //TODO: Handle arrays
+				qp[lidx] = k[idx][0] //TODO: Handle arrays
+			default:
+				j[lidx] = strings.ToLower(k[idx][0])  //TODO: Handle arrays
+				qp[lidx] = strings.ToLower(k[idx][0]) //TODO: Handle arrays
+			}
+
 		}
 		if len(qp) > 0 {
 			//If we have query params **OVERWRITE** the split URL ones
 			if params, err := json.Marshal(qp); err == nil {
-				j["params"] = string(params)
+				j["params"] = strings.ToLower(string(params))
 			}
 		}
-		wargs.Values = &j
+		break
+	case http.MethodPut:
 	case http.MethodPost:
 		//Json (POST)
 		//This is fully controlled, only send what we need (inc. params)
@@ -576,18 +688,40 @@ func track(c *Configuration, w http.ResponseWriter, r *http.Request) error {
 		}
 		if len(body) > 0 {
 			//r.Body = ioutil.NopCloser(bytes.NewBuffer(body))
-			if err := json.Unmarshal(body, &j); err != nil {
-				return fmt.Errorf("Bad JS (parse)")
+			// for idx := range body {
+			// 	body[idx] = byte(unicode.ToLower(rune(body[idx])))
+			// }
+			b := make(map[string]interface{})
+			if err := json.Unmarshal(body, &b); err == nil {
+				for bpi := range b {
+					lbpi := strings.ToLower(bpi)
+					switch lbpi {
+					case "ehash", "bhash":
+						j[lbpi] = b[bpi]
+					default:
+						if bpiv, ok := b[bpi].(string); ok {
+							j[lbpi] = strings.ToLower(bpiv)
+						} else if b[bpi] != nil {
+							j[lbpi] = b[bpi]
+						}
+					}
+				}
 			}
-			wargs.Values = &j
 		}
+		break
 	default:
 		return nil
+	}
+	_, okc := j["content"].(string)
+	_, oke := j["ename"].(string)
+	if okc && !oke {
+		j["ename"] = j["content"]
+		delete(j, "content")
 	}
 	for idx := range c.Notify {
 		s := &c.Notify[idx]
 		if s.Session != nil {
-			if err := s.Session.write(&wargs); err != nil {
+			if err := s.Session.write(wargs); err != nil {
 				if c.Debug {
 					fmt.Printf("[ERROR] Writing to %s: %s\n", s.Service, err)
 				}
@@ -595,27 +729,29 @@ func track(c *Configuration, w http.ResponseWriter, r *http.Request) error {
 			}
 		}
 	}
-	if vid, ok := j["vid"].(string); ok {
-		expiration := time.Now().Add(365 * 24 * time.Hour)
-		cookie := http.Cookie{Name: "vid", Value: vid, Expires: expiration, Path: "/"}
-		http.SetCookie(w, &cookie)
+	if !wargs.IsServer {
+		var dom string
+		host, _, herr := net.SplitHostPort(r.Host)
+		if herr != nil {
+			host = r.Host
+		}
+		if net.ParseIP(host) == nil {
+			ha := strings.Split(strings.ToLower(host), ".")
+			dom = ha[len(ha)-1]
+			if len(ha) > 1 {
+				dom = ha[len(ha)-2] + "." + dom
+			}
+		}
+		if vid, ok := j["vid"].(string); ok {
+			expiration := time.Now().Add(99999 * 24 * time.Hour)
+			cookie := http.Cookie{Name: "vid", Value: vid, Expires: expiration, Path: "/", Domain: dom}
+			http.SetCookie(*w, &cookie)
+		} else if vid, ok := j["vid"].(gocql.UUID); ok {
+			expiration := time.Now().Add(99999 * 24 * time.Hour)
+			cookie := http.Cookie{Name: "vid", Value: vid.String(), Expires: expiration, Path: "/", Domain: dom}
+			http.SetCookie(*w, &cookie)
+		}
 	}
 	return nil
 
-}
-
-////////////////////////////////////////
-// FilterUrlPrefix
-////////////////////////////////////////
-func filterUrlPrefix(c *Configuration, s *string) error {
-	matches := urlPrefix.FindStringSubmatch(*s)
-	mi := len(matches)
-	if mi > 0 {
-		*s = matches[mi-1]
-	}
-	i := strings.Index(*s, "?")
-	if i > -1 {
-		*s = (*s)[:i]
-	}
-	return nil
 }

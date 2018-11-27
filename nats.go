@@ -138,18 +138,26 @@ func (i *NatsService) listen() error {
 				}
 				switch f.Alias {
 				case WRITE_DESC_COUNT:
+					if j["id"] == nil {
+						j["id"] = m.Subject
+					}
 					wargs.WriteType = WRITE_COUNT
+				case WRITE_DESC_UPDATE:
+					if j["id"] == nil {
+						j["id"] = m.Subject
+					}
+					wargs.WriteType = WRITE_UPDATE
 				case WRITE_DESC_LOG:
 					wargs.WriteType = WRITE_LOG
-				case WRITE_DESC_UPDATE:
-					wargs.WriteType = WRITE_UPDATE
 				default:
 				}
 				if wargs.WriteType != 0 {
 					for idx2 := range i.AppConfig.Notify {
 						n := &i.AppConfig.Notify[idx2]
 						if n.Session != nil {
-							n.Session.write(&wargs)
+							if err := n.Session.write(&wargs); err != nil {
+								fmt.Printf("[ERROR] Writing to %s: %s\n", n.Service, err)
+							}
 						}
 					}
 				}

@@ -1,13 +1,14 @@
 # Tracker
-Track every visitor click, setup growth experiments and measure every user outcome all in house without any external tools at unlimited scale (it's the same infrastructure that the big boys use: CERN, Netflix, Apple, Github). It's not exactly going to be a drop in replacement for Google Analytics, but it will go far beyond it to help you understand your users experience. 
+Track every visitor click, setup growth experiments and measure every user outcome and growth loop all under one roof for all of your sites/assets without any external tools at unlimited scale (it's the same infrastructure that the big boys use: CERN, Netflix, Apple, Github). It's not exactly going to be a drop in replacement for Google Analytics, but it will go far beyond it to help you understand your users' experience. 
 
-Don't want to give your user data to people you don't trust? Maybe save a GDPR lawsuit by using this.
+Don't want to give your user data to people you don't trust? Maybe save a GDPR lawsuit by using this. We've seen a marked drop in people sharing their data with Google Analytics, so this will allow you to get your own trusted statistics yourself.
 
 ## Features
-* Tracking API Calls & URLs
+* [Tracking URL Generator](https://chrome.google.com/webstore/detail/sfpl-visitor-tracker/dhpgldichapkobbnapfikfnoegjmblpa) extension for google chrome.
+* Tracking API Calls & URLs & GET Redirects
 * Tracking Images (for Emails)
-* Reverse Proxy included (one line Drop in NGINX replacement for your Node, Python, etc. API backend)
-* LetsEncrypt one line configuration
+* Reverse Proxy included (for your Node, Python, etc. API backend)
+* TLS or LetsEncrypt one line configuration
 * API & Request Rate Limiting
 * Horizontally Scalable (Clustered NATS, Clustered Cassandra, Dockerized App Swarm - Good for ECS).
 * File Server (w. Caching)
@@ -17,18 +18,37 @@ Don't want to give your user data to people you don't trust? Maybe save a GDPR l
 * Uncomplicated config.json one file configuration
 * Initial tests show around 1,000 connections per second per server month dollar
 * Written entirely in Golang
+* Replaces much of Traefik's functionality
+* Drop in replacement for InfluxData's Telegraf
+* Drop in NGINX replacement 
+
+## Compatible out of the box with
+* Apache Spark
+* Elastic Search
+* Apache Superset (AirBnB)
+* Cassandra
+* Elassandra
+* NATS.io
+* Jupyter
+
+![image](https://user-images.githubusercontent.com/760216/48519797-180ffb00-e823-11e8-9bae-ed21e169d6e2.png)
+
 
 ## Todo
 * Kafka plugin
 * NATS/Kafka converter/repeater
 * Flink plugin
 * Druid Plugin
+* Apache SNS 
+* Websocket Proxy (Ex. https://github.com/yhat/wsutil/blob/master/wsutil.go, https://gist.github.com/bradfitz/1d7bdf12278d4d713212ce6c74875dab) or wait for go 1.12
 
 ## Instructions
 
 * Install Cassandra or Elassandra
 * Install Schema to Cassandra https://github.com/dioptre/tracker/blob/master/.setup/schema.1.cql
-* Install Nats
+* Insall Go > 1.9.3 (if you want to build from source)
+* Get the tracker (if you want to build from source) ```go get github.com/dioptre/tracker && go build github.com/dioptre/tracker```
+* Install Nats ```go get github.com/nats-io/gnatsd && go build github.com/nats-io/gnatsd```
 * Go through the config.json file and change what you want.
 * Deploy using Docker or ```go build```
 * Use Spark, Kibana, etc to interrogate & ETL to your warehouse
@@ -37,12 +57,12 @@ Send the server something to track:
 ### REST Payload Example
 In the following example, we use tuplets to persist what's needed to track (Ex. {"tr":"v1"})
 ```
-https://localhost:8443/tr/v1/vid/aFccafd/ROCK/ON/lat/37.232332/lon/6.32233223/first/true/score/6/ref/andy
+https://localhost:8443/tr/v1/vid/00000000-0000-0000-0000-000000000000/ROCK/ON/lat/37.232332/lon/6.32233223/first/true/score/6/ref/00000000-0000-0000-0000-000000000001
 ```
 ### JSON Payload Example (Method:POST, Body)
 Descriptions of the columns we send are in the schema file above. (Ex. vid = visitorId)
 ```json
-{"last":"https://localhost:5001/cw.html","next":"https://localhost:5001/cw.html","params":{"type":"a","ref":"Bespoke"},"created":1539102052702,"duration":34752,"vid":"3d0be300-cbd2-11e8-aa59-ffd128a54d91","first":"false","sid":"3d0be301-cbd2-11e8-aa59-ffd128a54d91","tz":"America/Los_Angeles","device":"Linux","os":"Linux","sink":"cw$","score":1,"eid":"cw-a","uid":"admin"}
+{"last":"https://localhost:5001/cw.html","url":"https://localhost:5001/cw.html","params":{"type":"a","aff":"Bespoke"},"created":1539102052702,"duration":34752,"vid":"3d0be300-cbd2-11e8-aa59-ffd128a54d91","first":"false","sid":"3d0be301-cbd2-11e8-aa59-ffd128a54d91","tz":"America/Los_Angeles","device":"Linux","os":"Linux","sink":"cw$","score":1,"eid":"cw-a","uid":"admin"}
 ```
 
 ### Deploy

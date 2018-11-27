@@ -13,12 +13,26 @@
     "ProxyPort" : ":8080",
     "ProxyDailyLimit" : 0,
     "ProxyDailyLimitChecker" : "cassandra",
+    "IgnoreProxyOptions" : false,
+    "ProxyUrlFilter" : ".*(dontlogthese|login|css|js|json|jpeg|jpg|gif|png|ico)",
+    "ProxyForceJson" : false,
     "MaximumConnections": 2000,
-    "Debug" : true,
-    "UrlPrefixFilter" : "http(s|)://(localhost|tracker\\.staging\\.homodea\\.com)(:[0-9]*|)(/.*)",
+    "PrefixPrivateHash" : "",
+    "ReadTimeoutSeconds" : 20,
+    "ReadHeaderTimeoutSeconds" : 20,
+    "WriteTimeoutSeconds" : 20,
+    "IdleTimeoutSeconds" : 20,
+    "MaxHeaderBytes" : 1048576,
+    "AllowOrigin": "*",
+    "DefaultRedirect": "https://staging.homodea.com",
+    "Debug" : false,
+    "UrlFilter" : "http(s|)://(api|tr|dev|spark|)(\\.|)(staging\\.homodea\\.com|localhost)(:[0-9]*|)(/[^\\?#]*)(\\?|#|)",
+    "UrlFilterMatchGroup" : 6,
+    "IgnoreQueryParamsKey" : "igqp",
     "Notify": [
         {
             "Service": "cassandra",
+            "Connections" : 2,
             "Hosts": [
                 "cassandra-seed1"
             ],
@@ -150,7 +164,7 @@
             "Key": "pem/nats.key.pem",
             "Format": "json",
             "MessageLimit": 65536,
-            "BytesLimit": 67108864,
+            "ByteLimit": 67108864,
             "Filter": [
                 {
                     "Alias": "log",
