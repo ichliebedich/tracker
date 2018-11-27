@@ -217,16 +217,16 @@ func (i *CassandraService) write(w *WriteArgs) error {
 		//////////////////////////////////////////////
 		//[updated]
 		updated := time.Now().UTC()
-		//[reid]
-		var reid *gocql.UUID
-		if temp, ok := v["reid"].(string); !ok {
+		//[rid]
+		var rid *gocql.UUID
+		if temp, ok := v["rid"].(string); ok {
 			if temp2, err := gocql.ParseUUID(temp); err == nil {
-				reid = &temp2
+				rid = &temp2
 			}
 		}
 		//[auth]
 		var auth *gocql.UUID
-		if temp, ok := v["auth"].(string); !ok {
+		if temp, ok := v["auth"].(string); ok {
 			if temp2, err := gocql.ParseUUID(temp); err == nil {
 				auth = &temp2
 			}
@@ -303,6 +303,7 @@ func (i *CassandraService) write(w *WriteArgs) error {
 			json.Unmarshal([]byte(ps), &temp)
 			//De-identify data
 			delete(temp, "email")
+			delete(temp, "ehash")
 			delete(temp, "uname")
 			//Remove column params/duplicates
 			delete(temp, "first")
@@ -348,7 +349,7 @@ func (i *CassandraService) write(w *WriteArgs) error {
 			delete(temp, "tz")
 			delete(temp, "vp")
 			delete(temp, "targets")
-			delete(temp, "reid")
+			delete(temp, "rid")
 			v["params"] = &temp
 		}
 		//[culture]
@@ -366,25 +367,42 @@ func (i *CassandraService) write(w *WriteArgs) error {
 			}
 		}
 
+		//WARNING: w.URI has destructive changes here
 		//[last],[url]
-		if i.AppConfig.FilterPrefix {
+		if i.AppConfig.IsUrlFiltered {
 			if last, ok := v["last"].(string); ok {
-				filterUrlPrefix(i.AppConfig, &last)
+				filterUrl(i.AppConfig, &last, &i.AppConfig.UrlFilterMatchGroup)
 				v["last"] = last
 			}
 			if url, ok := v["url"].(string); ok {
-				filterUrlPrefix(i.AppConfig, &url)
+				filterUrl(i.AppConfig, &url, &i.AppConfig.UrlFilterMatchGroup)
 				v["url"] = url
 			} else {
 				//check for /tr/ /pub/ /img/ (ignore)
 				if !regexInternalURI.MatchString(w.URI) {
-					filterUrlPrefix(i.AppConfig, &w.URI)
+					filterUrl(i.AppConfig, &w.URI, &i.AppConfig.UrlFilterMatchGroup)
 					v["url"] = w.URI
+				} else {
+					delete(v, "url")
 				}
 			}
-		}
-		if v["url"] == nil {
-			v["url"] = w.URI
+		} else {
+			if last, ok := v["last"].(string); ok {
+				filterUrlAppendix(&last)
+				v["last"] = last
+			}
+			if url, ok := v["url"].(string); ok {
+				filterUrlAppendix(&url)
+				v["url"] = url
+			} else {
+				//check for /tr/ /pub/ /img/ (ignore)
+				if !regexInternalURI.MatchString(w.URI) {
+					filterUrlAppendix(&w.URI)
+					v["url"] = w.URI
+				} else {
+					delete(v, "url")
+				}
+			}
 		}
 
 		//[Email]
@@ -392,7 +410,7 @@ func (i *CassandraService) write(w *WriteArgs) error {
 		if temp, ok := v["ehash"].(string); ok {
 			ehash = &temp
 		} else if temp, ok := v["email"].(string); ok {
-			temp = sha(temp)
+			temp = sha(i.AppConfig.PrefixPrivateHash + temp)
 			ehash = &temp
 		}
 		delete(v, "email")
@@ -435,6 +453,7 @@ func (i *CassandraService) write(w *WriteArgs) error {
 				bhash,
 				auth,
 				duration,
+				campaign,
 				xid,
 				split,
 				ename,
@@ -444,9 +463,9 @@ func (i *CassandraService) write(w *WriteArgs) error {
 				score,							
 				params,
 				targets,
-				reid
+				rid
 			) 
-			values (?,?,?,?,?,?,?,?,?,? ,?,?,?,?,?,?,?,?,?,? ,?,?,?,?,?)`, //25
+			values (?,?,?,?,?,?,?,?,?,? ,?,?,?,?,?,?,?,?,?,? ,?,?,?,?,?,?)`, //26
 			w.EventID,
 			v["vid"],
 			v["sid"],
@@ -462,6 +481,7 @@ func (i *CassandraService) write(w *WriteArgs) error {
 			bhash,
 			auth,
 			duration,
+			v["campaign"],
 			v["xid"],
 			v["split"],
 			v["ename"],
@@ -471,7 +491,7 @@ func (i *CassandraService) write(w *WriteArgs) error {
 			score,
 			v["params"],
 			v["targets"],
-			reid).Exec(); xerr != nil && i.AppConfig.Debug {
+			rid).Exec(); xerr != nil && i.AppConfig.Debug {
 			fmt.Println("C*[events]:", xerr)
 		}
 

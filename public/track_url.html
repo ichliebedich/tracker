@@ -281,6 +281,11 @@
             if (!results[2]) return '';
             return decodeURIComponent(results[2].replace(/\+/g, ' '));
         }
+
+        function cleanParameter(value) {
+            if (value)
+                return encodeURIComponent(value.replace(/( )/ig, "_").replace(/[^a-zA-Z0-9_]/g, "").toLowerCase());
+        }
     </script>
 </head>
 
@@ -322,20 +327,21 @@
             }
             document.getElementById("errors").innerHTML = "";
             var link = `https://${document.getElementById("tracker").value}/rdr/v1/?gu=1`; //added gu for generated_url = 1 = true
-            link += document.getElementById("ptyp").value ? `&ptyp=${encodeURIComponent(document.getElementById("ptyp").value)}` : '';
-            link += document.getElementById("source").value ? `&utm_source=${encodeURIComponent(document.getElementById("source").value)}` : '';
-            link += document.getElementById("medium").value ? `&utm_medium=${encodeURIComponent(document.getElementById("medium").value)}` : '';
-            link += document.getElementById("campaign").value ? `&utm_campaign=${encodeURIComponent(document.getElementById("campaign").value)}` : '';
-            link += document.getElementById("term").value ? `&utm_term=${encodeURIComponent(document.getElementById("term").value)}` : '';
-            link += document.getElementById("aff").value ? `&aff=${encodeURIComponent(document.getElementById("aff").value)}` : '';
-            link += document.getElementById("sink").value ? `&sink=${encodeURIComponent(document.getElementById("sink").value)}` : '';
+            link += document.getElementById("ptyp").value ? `&ptyp=${cleanParameter(document.getElementById("ptyp").value)}` : '';
+            link += document.getElementById("source").value ? `&utm_source=${cleanParameter(document.getElementById("source").value)}` : '';
+            link += document.getElementById("medium").value ? `&utm_medium=${cleanParameter(document.getElementById("medium").value)}` : '';
+            link += document.getElementById("campaign").value ? `&utm_campaign=${cleanParameter(document.getElementById("campaign").value)}` : '';
+            link += document.getElementById("term").value ? `&utm_term=${cleanParameter(document.getElementById("term").value)}` : '';
+            link += document.getElementById("aff").value ? `&aff=${cleanParameter(document.getElementById("aff").value)}` : '';
+            link += document.getElementById("sink").value ? `&sink=${cleanParameter(document.getElementById("sink").value)}` : '';
             link += document.getElementById("score").value ? `&score=${encodeURIComponent(document.getElementById("score").value)}` : '';
-            link += document.getElementById("xid").value ? `&xid=${encodeURIComponent(document.getElementById("xid").value)}` : '';
-            link += document.getElementById("ver").value ? `&ver=${encodeURIComponent(document.getElementById("ver").value)}` : '';
-            link += document.getElementById("auth").value ? `&auth=${encodeURIComponent(document.getElementById("auth").value)}` : '';
-            link += document.getElementById("ename").value ? `&utm_content=${encodeURIComponent(document.getElementById("ename").value)}` : '';
-            link += document.getElementById("etyp").value ? `&etype=${encodeURIComponent(document.getElementById("etyp").value)}` : '';
-            link += document.getElementById("ref").value ? `&ref=${encodeURIComponent(document.getElementById("ref").value)}` : '';
+            link += document.getElementById("xid").value ? `&xid=${cleanParameter(document.getElementById("xid").value)}` : '';
+            link += document.getElementById("ver").value ? `&ver=${cleanParameter(document.getElementById("ver").value)}` : '';
+            link += document.getElementById("auth").value ? `&auth=${cleanParameter(document.getElementById("auth").value)}` : '';
+            link += document.getElementById("ename").value ? `&utm_content=${cleanParameter(document.getElementById("ename").value)}` : '';
+            link += document.getElementById("etyp").value ? `&etype=${cleanParameter(document.getElementById("etyp").value)}` : '';
+            link += document.getElementById("ref").value ? `&ref=${cleanParameter(document.getElementById("ref").value)}` : '';
+            link += document.getElementById("uname").value ? `&uname=${cleanParameter(document.getElementById("uname").value)}` : '';
             link = link.toLowerCase();
             link += `&url=${encodeURIComponent(document.getElementById("url").value)}`;
             document.getElementById("linkText").innerHTML = link;
@@ -344,12 +350,28 @@
 
         }
         function onChangeTracker() {
-            Cookies.set('tracker', document.getElementById("tracker").value);
+            let options = { expires: 99999 }
+            if (!ipv4v6regex.test(window.location.hostname)) {
+                const ha = window.location.hostname.split(".");            
+                let dom = ha[ha.length - 1];
+                if (ha.length > 1)
+                    dom = ha[ha.length - 2] + "." + dom;       
+                options.domain = dom;
+            }
+            Cookies.set('tr', document.getElementById("tracker").value, options);
             onChangeParameter();            
         }
+        var ipv4v6regex =  /(^\s*((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?))\s*$)|(^\s*((([0-9A-Fa-f]{1,4}:){7}([0-9A-Fa-f]{1,4}|:))|(([0-9A-Fa-f]{1,4}:){6}(:[0-9A-Fa-f]{1,4}|((25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3})|:))|(([0-9A-Fa-f]{1,4}:){5}(((:[0-9A-Fa-f]{1,4}){1,2})|:((25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3})|:))|(([0-9A-Fa-f]{1,4}:){4}(((:[0-9A-Fa-f]{1,4}){1,3})|((:[0-9A-Fa-f]{1,4})?:((25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}))|:))|(([0-9A-Fa-f]{1,4}:){3}(((:[0-9A-Fa-f]{1,4}){1,4})|((:[0-9A-Fa-f]{1,4}){0,2}:((25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}))|:))|(([0-9A-Fa-f]{1,4}:){2}(((:[0-9A-Fa-f]{1,4}){1,5})|((:[0-9A-Fa-f]{1,4}){0,3}:((25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}))|:))|(([0-9A-Fa-f]{1,4}:){1}(((:[0-9A-Fa-f]{1,4}){1,6})|((:[0-9A-Fa-f]{1,4}){0,4}:((25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}))|:))|(:(((:[0-9A-Fa-f]{1,4}){1,7})|((:[0-9A-Fa-f]{1,4}){0,5}:((25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}))|:)))(%.+)?\s*$)/;
+
+
     </script>
     <form onsubmit="return onSubmit(event);">
         <ul class="form">
+            <li>
+                <h3>Generate a tracked URL:</h3>
+                <hr/>
+                <p>Only letters, numbers and _ are accepted characters for all values except URL and the tracking server. These values will be auto-corrected.</small></p>
+            </li>
             <li>
                 <label>Tracking Server <span class="required">*</span></label>
                 <input id="tracker" placeholder="tr.example.com" type="text" onchange="onChangeTracker()"
@@ -357,7 +379,7 @@
             </li>
             <li>
                 <label>Url<span class="required">*</span></label>
-                <input id="url" placeholder="https://example.com/whatsinthenews.html" type="text" onchange="onChangeParameter()" class="field-long" />
+                <input id="url" placeholder="Ex. https://example.com/whatsinthenews.html" type="text" onchange="onChangeParameter()" class="field-long" />
             </li>
             <li>
                 <label>Page Type (What is the URL about?)</label>
@@ -384,17 +406,21 @@
                 <input id="campaign" placeholder="Ex. feature1_push_july_2018" type="text" class="field-long" onchange="onChangeParameter()"/>
             </li>            
             <li>
-                <label>UTM_Term (SEO Search Query Term)</label>
+                <label >Your username</label>
+                <input id="uname" placeholder="Ex. myexampleusername" type="text" class="field-long" onchange="onChangeParameter()"/>
+            </li>  
+            <li>
+                <label >Affiliate ID / Promo Code</label>
+                <input id="aff" placeholder="Ex. bob_winter" type="text" class="field-long" onchange="onChangeParameter()"/>
+            </li>  
+            <li>
+                <h4 class="advanced">Advanced Options:</h4>
+                <hr/>
+            </li>
+            <li>
+                <label class="advanced">UTM_Term (SEO Search Query Term)</label>
                 <input id="term" placeholder="Ex. weather" type="text" class="field-long" onchange="onChangeParameter()"/>
             </li>            
-            <li>
-                <label>Affiliate ID / Promo Code</label>
-                <input id="aff" placeholder="Ex. bob_winter" type="text" class="field-long" onchange="onChangeParameter()"/>
-            </li>                
-            <li>
-                <hr/>
-                <h4 class="advanced">Advanced Options:</h4>
-            </li>
             <li>
                 <label class="advanced">Local Optimum (What are we wanting the user to do right now?)</label>
                 <input type="text" id="sink" class="field-divided" placeholder="Eliciting Action (Ex. $)" onchange="onChangeParameter()"/>
@@ -425,7 +451,6 @@
                 <textarea name="field5" id="field5" class="field-long field-textarea"></textarea>
             </li> -->
             <li>
-                <hr/>
                 <input type="submit" value="Submit" />
             </li>
             <li>
@@ -439,7 +464,7 @@
     <script>
         document.getElementById("url").value = getParameterByName('url') || '';
         document.getElementById("ref").value = Cookies.get('vid') || null;
-        document.getElementById("tracker").value = Cookies.get('tracker') || '';
+        document.getElementById("tracker").value = Cookies.get('tr') || '';
     </script>
 </body>
 

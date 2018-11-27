@@ -77,17 +77,36 @@ func sha(s string) string {
 }
 
 ////////////////////////////////////////
-// FilterUrlPrefix
+// filterUrl
+// matchGroup is a 1 indexed array (0 is default last)
+// returns last match if no group, or group
 ////////////////////////////////////////
-func filterUrlPrefix(c *Configuration, s *string) error {
-	matches := urlPrefix.FindStringSubmatch(*s)
+func filterUrl(c *Configuration, s *string, matchGroup *int) error {
+	matches := regexFilterUrl.FindStringSubmatch(*s)
 	mi := len(matches)
-	if mi > 0 {
-		*s = matches[mi-1]
+	if matchGroup == nil || *matchGroup == 0 {
+		//Take the last one by default
+		if mi > 0 {
+			*s = matches[mi-1]
+			return nil
+		}
+	} else {
+		if mi > *matchGroup {
+			*s = matches[*matchGroup]
+			return nil
+		}
 	}
-	i := strings.Index(*s, "?")
-	if i > -1 {
-		*s = (*s)[:i]
+	//Fallback
+	filterUrlAppendix(s)
+	return fmt.Errorf("Mismatch Regex (Url Filter)")
+}
+
+func filterUrlAppendix(s *string) error {
+	if s != nil {
+		i := strings.Index(*s, "?")
+		if i > -1 {
+			*s = (*s)[:i]
+		}
 	}
 	return nil
 }

@@ -63,7 +63,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode"
 
 	"github.com/gocql/gocql"
 	"github.com/nats-io/go-nats"
@@ -161,6 +160,7 @@ type Configuration struct {
 	TLSKey                   string
 	Notify                   []Service
 	Consume                  []Service
+	PrefixPrivateHash        string
 	ProxyUrl                 string
 	ProxyUrlFilter           string
 	IgnoreProxyOptions       bool
@@ -173,9 +173,10 @@ type Configuration struct {
 	SchemaVersion            int
 	ApiVersion               int
 	Debug                    bool
-	UrlPrefixFilter          string
+	UrlFilter                string
+	UrlFilterMatchGroup      int
 	AllowOrigin              string
-	FilterPrefix             bool
+	IsUrlFiltered            bool
 	MaximumConnections       int
 	ReadTimeoutSeconds       int
 	ReadHeaderTimeoutSeconds int
@@ -210,12 +211,12 @@ const (
 
 var (
 	// Quote Ident replacer.
-	qiReplacer       = strings.NewReplacer("\n", `\n`, `\`, `\\`, `"`, `\"`)
+	regexQiReplacer  = strings.NewReplacer("\n", `\n`, `\`, `\\`, `"`, `\"`)
 	regexCount       = regexp.MustCompile(`\.count\.(.*)`)
 	regexUpdate      = regexp.MustCompile(`\.update\.(.*)`)
-	urlPrefix        = regexp.MustCompile(`(.*)`)
+	regexFilterUrl   = regexp.MustCompile(`(.*)`)
 	regexInternalURI = regexp.MustCompile(`.*(/tr/|/img/|/pub/|/str/|/rdr/).*`) //TODO: MUST FILTER INTERNAL ROUTES, UPDATE IF ADDING A NEW ROUTE, PROXY OK!!!
-	utmPrefix        = regexp.MustCompile(`utm_`)
+	regexUtmPrefix   = regexp.MustCompile(`utm_`)
 )
 
 //////////////////////////////////////// Transparent GIF
@@ -256,10 +257,10 @@ func main() {
 	}
 
 	////////////////////////////////////////SETUP FILTER
-	if configuration.UrlPrefixFilter != "" {
+	if configuration.UrlFilter != "" {
 		fmt.Println("Setting up URL prefix filter...")
-		configuration.FilterPrefix = true
-		urlPrefix, _ = regexp.Compile(configuration.UrlPrefixFilter)
+		configuration.IsUrlFiltered = true
+		regexFilterUrl, _ = regexp.Compile(configuration.UrlFilter)
 	}
 
 	////////////////////////////////////////SETUP ORIGIN
@@ -632,10 +633,17 @@ func trackWithArgs(c *Configuration, w *http.ResponseWriter, r *http.Request, wa
 		j["vid"] = cookie.Value
 	}
 	//Path
-	p := strings.Split(strings.ToLower(r.URL.Path), "/")
+	p := strings.Split(r.URL.Path, "/")
 	pmax := (len(p) - 2)
 	for i := 1; i <= pmax; i += 2 {
-		j[p[i]] = p[i+1] //TODO: Handle arrays
+		p[i] = strings.ToLower(p[i])
+		switch p[i] {
+		case "ehash", "bhash":
+			j[p[i]] = p[i+1] //TODO: Handle arrays
+			break
+		default:
+			j[p[i]] = strings.ToLower(p[i+1]) //TODO: Handle arrays
+		}
 	}
 	//Inject Params
 	if params, err := json.Marshal(j); err == nil {
@@ -652,9 +660,16 @@ func trackWithArgs(c *Configuration, w *http.ResponseWriter, r *http.Request, wa
 		qp := make(map[string]interface{})
 		for idx := range k {
 			lidx := strings.ToLower(idx)
-			lidx = utmPrefix.ReplaceAllString(lidx, "")
-			j[lidx] = k[idx][0]
-			qp[lidx] = k[idx][0]
+			lidx = regexUtmPrefix.ReplaceAllString(lidx, "")
+			switch lidx {
+			case "ehash", "bhash":
+				j[lidx] = k[idx][0]  //TODO: Handle arrays
+				qp[lidx] = k[idx][0] //TODO: Handle arrays
+			default:
+				j[lidx] = strings.ToLower(k[idx][0])  //TODO: Handle arrays
+				qp[lidx] = strings.ToLower(k[idx][0]) //TODO: Handle arrays
+			}
+
 		}
 		if len(qp) > 0 {
 			//If we have query params **OVERWRITE** the split URL ones
@@ -673,13 +688,23 @@ func trackWithArgs(c *Configuration, w *http.ResponseWriter, r *http.Request, wa
 		}
 		if len(body) > 0 {
 			//r.Body = ioutil.NopCloser(bytes.NewBuffer(body))
-			for idx := range body {
-				body[idx] = byte(unicode.ToLower(rune(body[idx])))
-			}
+			// for idx := range body {
+			// 	body[idx] = byte(unicode.ToLower(rune(body[idx])))
+			// }
 			b := make(map[string]interface{})
 			if err := json.Unmarshal(body, &b); err == nil {
 				for bpi := range b {
-					j[bpi] = b[bpi]
+					lbpi := strings.ToLower(bpi)
+					switch lbpi {
+					case "ehash", "bhash":
+						j[lbpi] = b[bpi]
+					default:
+						if bpiv, ok := b[bpi].(string); ok {
+							j[lbpi] = strings.ToLower(bpiv)
+						} else if b[bpi] != nil {
+							j[lbpi] = b[bpi]
+						}
+					}
 				}
 			}
 		}
@@ -705,13 +730,25 @@ func trackWithArgs(c *Configuration, w *http.ResponseWriter, r *http.Request, wa
 		}
 	}
 	if !wargs.IsServer {
+		var dom string
+		host, _, herr := net.SplitHostPort(r.Host)
+		if herr != nil {
+			host = r.Host
+		}
+		if net.ParseIP(host) == nil {
+			ha := strings.Split(strings.ToLower(host), ".")
+			dom = ha[len(ha)-1]
+			if len(ha) > 1 {
+				dom = ha[len(ha)-2] + "." + dom
+			}
+		}
 		if vid, ok := j["vid"].(string); ok {
 			expiration := time.Now().Add(99999 * 24 * time.Hour)
-			cookie := http.Cookie{Name: "vid", Value: vid, Expires: expiration, Path: "/"}
+			cookie := http.Cookie{Name: "vid", Value: vid, Expires: expiration, Path: "/", Domain: dom}
 			http.SetCookie(*w, &cookie)
 		} else if vid, ok := j["vid"].(gocql.UUID); ok {
 			expiration := time.Now().Add(99999 * 24 * time.Hour)
-			cookie := http.Cookie{Name: "vid", Value: vid.String(), Expires: expiration, Path: "/"}
+			cookie := http.Cookie{Name: "vid", Value: vid.String(), Expires: expiration, Path: "/", Domain: dom}
 			http.SetCookie(*w, &cookie)
 		}
 	}
