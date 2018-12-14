@@ -382,36 +382,48 @@
                     class="field-long"/>
             </li>
             <li>
-                <label>Url<span class="required">*</span></label>
-                <input id="url" placeholder="Ex. https://example.com/whatsinthenews.html" type="text" onchange="onChangeParameter()" class="field-long" />
+                <label>What is the Url of the page you are linking to?<span class="required">*</span></label>
+                <input id="url" placeholder="E.g. https://homodea.com/course/victory-and-peace" type="text" onchange="onChangeParameter()" class="field-long" />
             </li>
             <li>
                 <label>Hide Query Params from Url</label>
                 <input id="hideqp" type="checkbox" onchange="onChangeParameter()"/>
             </li>                  
             <li>
-                <label>Page Type (What is the URL about?)</label>
+                <label>What type of page are you linking to?</label>
                 <select id="ptyp" class="field-select" onchange="onChangeParameter()">
                     <option value=""></option>
-                    <option value="news">News</option>
-                    <option value="ad">Advertisement</option>
-                    <option value="blog">Blog</option>
-                    <option value="content">Content</option>
-                    <option value="social">Social</option>
-                    <option value="meeting">Meeting</option>
+                    <option value="course">Course</option>
+                    <option value="lesson">Lesson</option>
+                    <option value="courses">Courses Directory</option>
+                    <option value="library">Library</option>
+                    <option value="category">Category Page</option>
+                    <option value="expert-profile">Expert Profile</option>
+                    <option value="homepage">Homepage</option>
                 </select>
             </li>
             <li>
-                <label>Source/UTM_Source (Referring domain, User, Service)</label>
-                <input id="source" placeholder="Ex. andy.com, local_news" type="text" class="field-long" onchange="onChangeParameter()"/>
+                <label>Where are you posting the link?</label>
+                <select id="source" class="field-select" onchange="onChangeParameter()">
+                    <option value="facebook">Facebook</option>
+                    <option value="instagram">Instagram</option>
+                    <option value="email">Email</option>
+                    <option value="microsite">One of our websites</option>
+                    <option value="other">Other</option>
+                </select>
             </li>            
             <li>
-                <label>Medium/UTM_Medium</label>
-                <input id="medium" placeholder="Ex. email, sms, ad, invite, etc." type="text" class="field-long" onchange="onChangeParameter()"/>
+                <label>What is the marketing medium for this campaign?</label>
+                <select id="medium" class="field-select" onchange="onChangeParameter()">
+                    <option value="content">Content</option>
+                    <option value="affiliate">Affiliate</option>
+                    <option value="paid">Advertisement</option>
+                    <option value="press">Press</option>
+                </select>
             </li>            
             <li>
-                <label>Marketing Campaign Name/UTM_Campaign</label>
-                <input id="campaign" placeholder="Ex. feature1_push_july_2018" type="text" class="field-long" onchange="onChangeParameter()"/>
+                <label>What name do you give this campaign?</label>
+                <input id="campaign" placeholder="E.g. victory-and-peace-teaser-1" type="text" class="field-long" onchange="onChangeParameter()"/>
             </li>            
             <li>
                 <label >Your username</label>
