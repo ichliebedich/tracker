@@ -109,7 +109,7 @@ pipeline {
           ONE="0"
           TWO="0"
           DONE=false
-          for (int i = 0; i < 30; i++) {
+          for (int i = 0; i < 60; i++) {
             sleep 10
             ONE = sh (
               script: "aws ecs describe-services --output json --cluster ${ECS_CLUST} --services '${ECS_SERVI}' | jq -r '.services[0] | .deployments | length'",
