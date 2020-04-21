@@ -512,11 +512,7 @@ func (i *CassandraService) write(w *WriteArgs) error {
 			//[vid]
 			isNew := false
 			if _, ok := v["vid"].(string); !ok {
-				if _, uok := v["uid"].(string); uok {
-					v["vid"] = v["uid"]
-				} else {
-					v["vid"] = w.EventID
-				}
+				v["vid"] = w.EventID
 				isNew = true
 			}
 			//[sid]
