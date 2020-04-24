@@ -54,6 +54,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
+	"math/rand"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -233,6 +234,8 @@ func main() {
 	fmt.Println("(c) Copyright 2018 SF Product Labs LLC.")
 	fmt.Println("Use of this software is subject to the LICENSE agreement.")
 	fmt.Println("//////////////////////////////////////////////////////////////\n\n")
+
+	rand.Seed(time.Now().UnixNano())
 
 	//////////////////////////////////////// LOAD CONFIG
 	fmt.Println("Starting services...")
