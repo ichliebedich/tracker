@@ -429,6 +429,39 @@ func (i *CassandraService) write(w *WriteArgs) error {
 		}
 		delete(v, "uname")
 
+		//EventID
+		if w.EventID.Timestamp() == 0 {
+			w.EventID = gocql.TimeUUID()
+		}
+		//[vid]
+		isNew := false
+		if vidstring, ok := v["vid"].(string); !ok {
+			v["vid"] = gocql.TimeUUID()
+			isNew = true
+		} else {
+			//Let's override the event id too
+			tempvid, _ := gocql.ParseUUID(vidstring)
+			if tempvid.Timestamp() == 0 {
+				v["vid"] = gocql.TimeUUID()
+				isNew = true
+			}
+		}
+		//[sid]
+		if sidstring, ok := v["sid"].(string); !ok {
+			if isNew {
+				v["sid"] = v["vid"]
+			} else {
+				v["sid"] = gocql.TimeUUID()
+			}
+		} else {
+			tempuuid, _ := gocql.ParseUUID(sidstring)
+			if tempuuid.Timestamp() == 0 {
+				v["sid"] = gocql.TimeUUID()
+			} else {
+				v["sid"] = tempuuid
+			}
+		}
+
 		//////////////////////////////////////////////
 		//Persist
 		//////////////////////////////////////////////
@@ -509,20 +542,6 @@ func (i *CassandraService) write(w *WriteArgs) error {
 
 		if !w.IsServer {
 
-			//[vid]
-			isNew := false
-			if _, ok := v["vid"].(string); !ok {
-				v["vid"] = w.EventID
-				isNew = true
-			}
-			//[sid]
-			if _, ok := v["sid"].(string); !ok {
-				if isNew {
-					v["sid"] = v["vid"]
-				} else {
-					v["sid"] = gocql.TimeUUID()
-				}
-			}
 			//[first]
 			isFirst := isNew || (v["first"] != "false")
 
