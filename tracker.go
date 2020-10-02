@@ -299,6 +299,8 @@ func main() {
 	fmt.Println("Use of this software is subject to the LICENSE agreement.")
 	fmt.Println("//////////////////////////////////////////////////////////////\n\n")
 
+	rand.Seed(time.Now().UnixNano())
+
 	//////////////////////////////////////// LOAD CONFIG
 	fmt.Println("Starting services...")
 	configFile := "config.json"

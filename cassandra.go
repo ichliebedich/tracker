@@ -1133,6 +1133,7 @@ func (i *CassandraService) write(w *WriteArgs) error {
 		if w.EventID.Timestamp() == 0 {
 			w.EventID = gocql.TimeUUID()
 		}
+
 		//[vid] - default
 		isNew := false
 		if vidstring, ok := v["vid"].(string); !ok {
@@ -1146,6 +1147,7 @@ func (i *CassandraService) write(w *WriteArgs) error {
 				isNew = true
 			}
 		}
+
 		//[uid] - let's overwrite the vid if we have a uid
 		if uidstring, ok := v["uid"].(string); ok {
 			tempuid, _ := gocql.ParseUUID(uidstring)
@@ -1154,6 +1156,7 @@ func (i *CassandraService) write(w *WriteArgs) error {
 				isNew = false
 			}
 		}
+
 		//[sid]
 		if sidstring, ok := v["sid"].(string); !ok {
 			if isNew {
@@ -1364,6 +1367,7 @@ func (i *CassandraService) write(w *WriteArgs) error {
 		}
 
 		if !w.IsServer {
+
 
 			w.SaveCookie = true
 
