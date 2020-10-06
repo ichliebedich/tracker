@@ -1,0 +1,533 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="UTF-8">
+    <title>SF Product Labs</title>
+    <script>
+        /*!
+         * JavaScript Cookie v2.2.0
+         * https://github.com/js-cookie/js-cookie
+         *
+         * Copyright 2006, 2015 Klaus Hartl & Fagner Brack
+         * Released under the MIT license
+         */
+        ;
+        (function (factory) {
+            var registeredInModuleLoader;
+            if (typeof define === 'function' && define.amd) {
+                define(factory);
+                registeredInModuleLoader = true;
+            }
+            if (typeof exports === 'object') {
+                module.exports = factory();
+                registeredInModuleLoader = true;
+            }
+            if (!registeredInModuleLoader) {
+                var OldCookies = window.Cookies;
+                var api = window.Cookies = factory();
+                api.noConflict = function () {
+                    window.Cookies = OldCookies;
+                    return api;
+                };
+            }
+        }(function () {
+            function extend() {
+                var i = 0;
+                var result = {};
+                for (; i < arguments.length; i++) {
+                    var attributes = arguments[i];
+                    for (var key in attributes) {
+                        result[key] = attributes[key];
+                    }
+                }
+                return result;
+            }
+
+            function decode(s) {
+                return s.replace(/(%[0-9A-Z]{2})+/g, decodeURIComponent);
+            }
+
+            function init(converter) {
+                function api() { }
+
+                function set(key, value, attributes) {
+                    if (typeof document === 'undefined') {
+                        return;
+                    }
+
+                    attributes = extend({
+                        path: '/'
+                    }, api.defaults, attributes);
+
+                    if (typeof attributes.expires === 'number') {
+                        attributes.expires = new Date(new Date() * 1 + attributes.expires * 864e+5);
+                    }
+
+                    // We're using "expires" because "max-age" is not supported by IE
+                    attributes.expires = attributes.expires ? attributes.expires.toUTCString() : '';
+
+                    try {
+                        var result = JSON.stringify(value);
+                        if (/^[\{\[]/.test(result)) {
+                            value = result;
+                        }
+                    } catch (e) { }
+
+                    value = converter.write ?
+                        converter.write(value, key) :
+                        encodeURIComponent(String(value))
+                            .replace(/%(23|24|26|2B|3A|3C|3E|3D|2F|3F|40|5B|5D|5E|60|7B|7D|7C)/g, decodeURIComponent);
+
+                    key = encodeURIComponent(String(key))
+                        .replace(/%(23|24|26|2B|5E|60|7C)/g, decodeURIComponent)
+                        .replace(/[\(\)]/g, escape);
+
+                    var stringifiedAttributes = '';
+                    for (var attributeName in attributes) {
+                        if (!attributes[attributeName]) {
+                            continue;
+                        }
+                        stringifiedAttributes += '; ' + attributeName;
+                        if (attributes[attributeName] === true) {
+                            continue;
+                        }
+
+                        // Considers RFC 6265 section 5.2:
+                        // ...
+                        // 3.  If the remaining unparsed-attributes contains a %x3B (";")
+                        //     character:
+                        // Consume the characters of the unparsed-attributes up to,
+                        // not including, the first %x3B (";") character.
+                        // ...
+                        stringifiedAttributes += '=' + attributes[attributeName].split(';')[0];
+                    }
+
+                    return (document.cookie = key + '=' + value + stringifiedAttributes);
+                }
+
+                function get(key, json) {
+                    if (typeof document === 'undefined') {
+                        return;
+                    }
+
+                    var jar = {};
+                    // To prevent the for loop in the first place assign an empty array
+                    // in case there are no cookies at all.
+                    var cookies = document.cookie ? document.cookie.split('; ') : [];
+                    var i = 0;
+
+                    for (; i < cookies.length; i++) {
+                        var parts = cookies[i].split('=');
+                        var cookie = parts.slice(1).join('=');
+
+                        if (!json && cookie.charAt(0) === '"') {
+                            cookie = cookie.slice(1, -1);
+                        }
+
+                        try {
+                            var name = decode(parts[0]);
+                            cookie = (converter.read || converter)(cookie, name) ||
+                                decode(cookie);
+
+                            if (json) {
+                                try {
+                                    cookie = JSON.parse(cookie);
+                                } catch (e) { }
+                            }
+
+                            jar[name] = cookie;
+
+                            if (key === name) {
+                                break;
+                            }
+                        } catch (e) { }
+                    }
+
+                    return key ? jar[key] : jar;
+                }
+
+                api.set = set;
+                api.get = function (key) {
+                    return get(key, false /* read as raw */);
+                };
+                api.getJSON = function (key) {
+                    return get(key, true /* read as json */);
+                };
+                api.remove = function (key, attributes) {
+                    set(key, '', extend(attributes, {
+                        expires: -1
+                    }));
+                };
+
+                api.defaults = {};
+
+                api.withConverter = init;
+
+                return api;
+            }
+
+            return init(function () { });
+        }));
+    </script>
+    <style type="text/css">
+        .form {
+            margin: 10px auto;
+            max-width: 500px;
+            padding: 20px 12px 10px 20px;
+            font: 13px "Lucida Sans Unicode", "Lucida Grande", Arial, Helvetica, sans-serif;
+        }
+
+        .form li {
+            padding: 0;
+            display: block;
+            list-style: none;
+            margin: 10px 0 0 0;
+        }
+
+        .form label {
+            margin: 0 0 3px 0;
+            padding: 0px;
+            display: block;
+            font-weight: bold;
+        }
+
+        .form input[type=text],
+        .form input[type=date],
+        .form input[type=datetime],
+        .form input[type=number],
+        .form input[type=search],
+        .form input[type=time],
+        .form input[type=url],
+        .form input[type=email],
+        textarea,
+        select {
+            box-sizing: border-box;
+            -webkit-box-sizing: border-box;
+            -moz-box-sizing: border-box;
+            background-color: white;
+            border: 1px solid rgb(190, 190, 190);
+            padding: 7px;
+            margin: 0px;
+            -webkit-transition: all 0.30s ease-in-out;
+            -moz-transition: all 0.30s ease-in-out;
+            -ms-transition: all 0.30s ease-in-out;
+            -o-transition: all 0.30s ease-in-out;
+            outline: none;
+        }
+
+        .form input[type=text]:focus,
+        .form input[type=date]:focus,
+        .form input[type=datetime]:focus,
+        .form input[type=number]:focus,
+        .form input[type=search]:focus,
+        .form input[type=time]:focus,
+        .form input[type=url]:focus,
+        .form input[type=email]:focus,
+        .form textarea:focus,
+        .form select:focus {
+            -moz-box-shadow: 0 0 8px #88D5E9;
+            -webkit-box-shadow: 0 0 8px #88D5E9;
+            box-shadow: 0 0 8px #88D5E9;
+            border: 1px solid #88D5E9;
+        }
+
+        .form .field-divided {
+            width: 49%;
+        }
+
+        .form .field-long {
+            width: 100%;
+        }
+
+        .form .field-select {
+            width: 100%;
+        }
+
+        .form .field-textarea {
+            height: 100px;
+        }
+
+        .form input[type=submit],
+        .form input[type=button] {
+            background: #000000;
+            padding: 8px 15px 8px 15px;
+            border: none;
+            color: #fff;
+        }
+
+        .form input[type=submit]:hover,
+        .form input[type=button]:hover {
+            background: #313131;
+            box-shadow: none;
+            -moz-box-shadow: none;
+            -webkit-box-shadow: none;
+        }
+
+        .form .required {
+            color: red;
+        }
+        .form .advanced {
+            color: rgb(131, 131, 131);
+        }
+    </style>
+    <script>
+        function getParameterByName(name, url) {
+            if (!url) url = window.location.href;
+            name = name.replace(/[\[\]]/g, '\\$&');
+            var regex = new RegExp('[?&]' + name + '(=([^&#]*)|&|#|$)'),
+                results = regex.exec(url);
+            if (!results) return null;
+            if (!results[2]) return '';
+            return decodeURIComponent(results[2].replace(/\+/g, ' '));
+        }
+
+        function cleanParameter(value) {
+            if (value)
+                return encodeURIComponent(value.replace(/( )/ig, "_").replace(/[^a-zA-Z0-9_]/g, "").toLowerCase());
+        }
+
+        function getJSON (url, callback) {
+            var xhr = new XMLHttpRequest();
+            xhr.open('GET', url, true);
+            xhr.responseType = 'json';
+            xhr.onload = function() {
+              var status = xhr.status;
+              if (status === 200) {
+                callback(null, xhr.response);
+              } else {
+                callback(status, xhr.response);
+              }
+            };
+            xhr.send();
+          }
+
+          function getRootUrl(url) {
+            return url.toString().replace(/^(.*\/\/[^\/?#]*).*$/,"$1");
+          }
+
+          function getHost(url) {
+              return getRootUrl(url).replace(/.*\/\/(.*)/,"$1")
+          }
+
+          function sortTable() {
+            var table, rows, switching, i, x, y, shouldSwitch;
+            table = document.getElementById("redirects");
+            switching = true;
+            /* Make a loop that will continue until
+            no switching has been done: */
+            while (switching) {
+              // Start by saying: no switching is done:
+              switching = false;
+              rows = table.rows;
+              /* Loop through all table rows (except the
+              first, which contains table headers): */
+              for (i = 1; i < (rows.length - 1); i++) {
+                // Start by saying there should be no switching:
+                shouldSwitch = false;
+                /* Get the two elements you want to compare,
+                one from current row and one from the next: */
+                x = rows[i].getElementsByTagName("TD")[0];
+                y = rows[i + 1].getElementsByTagName("TD")[0];
+                // Check if the two rows should switch place:
+                if (x.innerHTML.toLowerCase() > y.innerHTML.toLowerCase()) {
+                  // If so, mark as a switch and break the loop:
+                  shouldSwitch = true;
+                  break;
+                }
+              }
+              if (shouldSwitch) {
+                /* If a switch has been marked, make the switch
+                and mark that a switch has been done: */
+                rows[i].parentNode.insertBefore(rows[i + 1], rows[i]);
+                switching = true;
+              }
+            }
+          }
+    </script>
+</head>
+
+<body>
+    <script>
+        function onConfirm() { 
+            const url = `https://${document.getElementById("redirector").value}/rpi/v1/redirect/${document.getElementById("uid").value}/${document.getElementById("key").value}`;
+            var el = document.createElement('a');
+            el.href = document.getElementById("url").value;
+            var link = `https://${document.getElementById("redirector").value}${document.getElementById("path").value}`;
+            fetch(url, {
+                method : "POST",                    
+                 body : JSON.stringify({
+                     urlfrom : link,
+                     hostfrom : document.getElementById("redirector").value,
+                     slugfrom : document.getElementById("path").value,
+                     urlto : document.getElementById("url").value,
+                     hostto : el.host,
+                     pathto : el.pathname,
+                     searchto : el.search,
+                 })
+            }).then(                
+                response => response.text() // .json(), etc.
+                // same as function(response) {return response.text();}
+            ).then(
+                html => {
+                    if (!html) {
+                        alert('Success')
+                        document.getElementById("link").style.display = "";
+                        document.getElementById("link").innerHTML = link;
+                        document.getElementById("link").href =  link;
+                    } else {
+                        alert(html);
+                        document.getElementById("link").style.display = "none";
+                    }
+                }
+            );  
+            return false;
+        }
+
+        function onSubmit(e) { 
+            e.preventDefault();  
+            document.getElementById("submitted").checked = true;           
+            //Check errors
+            if (document.getElementById("errors").innerHTML.length > 0) {
+                document.getElementById("link").style.display = "none";
+                document.getElementById("shorten").style.display = "none";
+            } else {
+                if (document.getElementById("submitted").checked) {                    
+                    document.getElementById("shorten").style.display = "";
+                }
+            }
+       
+            
+            //Build url
+            document.getElementById("link").innerHTML = "";
+            var url = document.getElementById("url").value;
+            if (typeof url !== 'string' || url.length < 3) {
+                document.getElementById("errors").innerHTML = "URL Required";
+                return false;    
+            }
+            if (!/((([A-Za-z]{3,9}:(?:\/\/)?)(?:[\-;:&=\+\$,\w]+@)?[A-Za-z0-9\.\-]+|(?:www\.|[\-;:&=\+\$,\w]+@)[A-Za-z0-9\.\-]+)((?:\/[\+~%\/\.\w\-_]*)?\??(?:[\-\+=&;%@\.\w_]*)#?(?:[\.\!\/\\\w]*))?)/.test(url)) {
+                document.getElementById("errors").innerHTML = "Bad URL";
+                return false;    
+            }
+            var redirector = document.getElementById("redirector").value;
+            if (typeof redirector !== 'string' || redirector.length < 3) {
+                document.getElementById("errors").innerHTML = "Redirect Server Required";
+                return false;    
+            }
+
+            document.getElementById("errors").innerHTML = "";
+            var link = ''; 
+            
+            document.getElementById("link").innerHTML =  ""; //`&url=${encodeURIComponent(document.getElementById("url").value + (document.getElementById("hideqp").checked ? "" : "?gu=1" + link))}`;
+            document.getElementById("link").href = link;
+            getJSON(`https://${document.getElementById("redirector").value}/rpi/v1/redirects/${document.getElementById("uid").value}/${document.getElementById("key").value}/${encodeURIComponent(getHost(document.getElementById("url").value))}`, function (status, response) {
+                if (status) {
+                    console.error(status, response)
+                    alert('Could not connect to redirect server.')
+                    return;
+                }
+                if (response.results && response.results.length) {
+                    let table = document.getElementById("redirects");
+                    for (i = table.rows.length - 1 ; i > 0; i--) {
+                        table.deleteRow(1);
+                    }
+                    table.style.display = "";
+                    for (i = 0; i < (response.results.length); i++) {
+                        var row = table.insertRow(i+1);
+                        var cell1 = row.insertCell(0);
+                        var cell2 = row.insertCell(1);
+                        cell1.innerHTML = response.results[i].urlfrom;
+                        cell2.innerHTML = response.results[i].urlto;
+                    }
+                }
+            });
+
+        }
+
+        function onChangeRedirector() {
+            let options = { expires: 99999 }
+            if (!ipv4v6regex.test(window.location.hostname)) {
+                const ha = window.location.hostname.split(".");            
+                let dom = ha[ha.length - 1];
+                if (ha.length > 1)
+                    dom = ha[ha.length - 2] + "." + dom;       
+                options.domain = dom;
+            }
+            Cookies.set('rdr', document.getElementById("redirector").value, options);          
+        }
+        var ipv4v6regex =  /(^\s*((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?))\s*$)|(^\s*((([0-9A-Fa-f]{1,4}:){7}([0-9A-Fa-f]{1,4}|:))|(([0-9A-Fa-f]{1,4}:){6}(:[0-9A-Fa-f]{1,4}|((25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3})|:))|(([0-9A-Fa-f]{1,4}:){5}(((:[0-9A-Fa-f]{1,4}){1,2})|:((25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3})|:))|(([0-9A-Fa-f]{1,4}:){4}(((:[0-9A-Fa-f]{1,4}){1,3})|((:[0-9A-Fa-f]{1,4})?:((25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}))|:))|(([0-9A-Fa-f]{1,4}:){3}(((:[0-9A-Fa-f]{1,4}){1,4})|((:[0-9A-Fa-f]{1,4}){0,2}:((25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}))|:))|(([0-9A-Fa-f]{1,4}:){2}(((:[0-9A-Fa-f]{1,4}){1,5})|((:[0-9A-Fa-f]{1,4}){0,3}:((25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}))|:))|(([0-9A-Fa-f]{1,4}:){1}(((:[0-9A-Fa-f]{1,4}){1,6})|((:[0-9A-Fa-f]{1,4}){0,4}:((25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}))|:))|(:(((:[0-9A-Fa-f]{1,4}){1,7})|((:[0-9A-Fa-f]{1,4}){0,5}:((25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}))|:)))(%.+)?\s*$)/;
+        
+        function onChangeUid() {
+            let options = { expires: 99999 }
+            Cookies.set('uid', document.getElementById("uid").value, options);
+        }
+        
+        function onChangeKey() {
+            let options = { expires: 99999 }
+            Cookies.set('key', document.getElementById("key").value, options);
+        }
+
+    </script>
+    <form onsubmit="return onSubmit(event);">
+        <ul class="form">
+            <li>
+                <h3>Shorten a URL:</h3>
+                <hr/>
+                <p>Only letters, numbers and _ are accepted characters for all values except URL and the redirect server. These values will be auto-corrected.</small></p>
+            </li>
+            <li>
+                <label>Redirect From (Server)<span class="required">*</span></label>
+                <input id="redirector" placeholder="Ex. tr.example.com" type="text" onchange="onChangeRedirector()" class="field-long"/>
+            </li>  
+            <li>
+                <label>Redirect From Path (Shortened)<span class="required">*</span></label>
+                <input id="path" type="text" class="field-divided" placeholder="Ex. /tv"/>
+                <p><small>Refresh if you'd like to auto-generate something else.</small></p>                
+            </li>     
+            <li>
+                <label>Redirect To (URL)<span class="required">*</span></label>
+                <input id="url" type="text" placeholder="Ex. https://nytimes.com/article1?sa=ff" class="field-long"/>
+            </li>  
+            <li>
+                <h4 class="advanced">Admin Options:</h4>
+                <hr/>
+            </li>                             
+            <li>
+                <label class="advanced">Redirect Server User<span class="required">*</span></label>
+                <input id="uid" type="text" onchange="onChangeUid()" class="field-long"/>
+            </li>       
+            <li>
+                <label class="advanced">Redirect Server Key<span class="required">*</span></label>
+                <input id="key" type="text" onchange="onChangeKey()" class="field-long"/>
+            </li>                    
+            <li>
+                <input type="submit" value="Check Existing" />
+            </li>
+            <li>
+                    <input id="submitted" type="checkbox" style="display: none;"/>
+                    <p id="errors" class="required"></p>
+                    <table id="redirects" style="display: none;margin-bottom:1.4rem;">
+                        <tr>
+                            <th onclick="sortTable()" style="cursor: pointer;">From</th>
+                            <th>To</th>
+                        </tr>                        
+                    </table>                    
+                    <input id="shorten" type="button" style="display: none;" value="Confirm" onclick="onConfirm();" />
+                    <p><a id="link" href="link" style="display: none;"></a></p>
+                    
+            </li>
+        </ul>
+        <input id="ref" type="hidden" />
+    </form>
+    <script>
+        document.getElementById("url").value = getParameterByName('url') || '';
+        document.getElementById("redirector").value = Cookies.get('rdr') || window.location.host;
+        document.getElementById("uid").value = Cookies.get('uid') || '';
+        document.getElementById("key").value = Cookies.get('key') || '';
+
+        shortid = (function(){function r(e,n,t){function o(i,f){if(!n[i]){if(!e[i]){var c="function"==typeof require&&require;if(!f&&c)return c(i,!0);if(u)return u(i,!0);var a=new Error("Cannot find module '"+i+"'");throw a.code="MODULE_NOT_FOUND",a}var p=n[i]={exports:{}};e[i][0].call(p.exports,function(r){var n=e[i][1][r];return o(n||r)},p,p.exports,r,e,n,t)}return n[i].exports}for(var u="function"==typeof require&&require,i=0;i<t.length;i++)o(t[i]);return o}return r})()({1:[function(require,module,exports){"use strict";module.exports=require("./lib/index")},{"./lib/index":5}],2:[function(require,module,exports){"use strict";var randomFromSeed=require("./random/random-from-seed");var ORIGINAL="0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_-";var alphabet;var previousSeed;var shuffled;function reset(){shuffled=false}function setCharacters(_alphabet_){if(!_alphabet_){if(alphabet!==ORIGINAL){alphabet=ORIGINAL;reset()}return}if(_alphabet_===alphabet){return}if(_alphabet_.length!==ORIGINAL.length){throw new Error("Custom alphabet for shortid must be "+ORIGINAL.length+" unique characters. You submitted "+_alphabet_.length+" characters: "+_alphabet_)}var unique=_alphabet_.split("").filter(function(item,ind,arr){return ind!==arr.lastIndexOf(item)});if(unique.length){throw new Error("Custom alphabet for shortid must be "+ORIGINAL.length+" unique characters. These characters were not unique: "+unique.join(", "))}alphabet=_alphabet_;reset()}function characters(_alphabet_){setCharacters(_alphabet_);return alphabet}function setSeed(seed){randomFromSeed.seed(seed);if(previousSeed!==seed){reset();previousSeed=seed}}function shuffle(){if(!alphabet){setCharacters(ORIGINAL)}var sourceArray=alphabet.split("");var targetArray=[];var r=randomFromSeed.nextValue();var characterIndex;while(sourceArray.length>0){r=randomFromSeed.nextValue();characterIndex=Math.floor(r*sourceArray.length);targetArray.push(sourceArray.splice(characterIndex,1)[0])}return targetArray.join("")}function getShuffled(){if(shuffled){return shuffled}shuffled=shuffle();return shuffled}function lookup(index){var alphabetShuffled=getShuffled();return alphabetShuffled[index]}function get(){return alphabet||ORIGINAL}module.exports={get:get,characters:characters,seed:setSeed,lookup:lookup,shuffled:getShuffled}},{"./random/random-from-seed":8}],3:[function(require,module,exports){"use strict";var generate=require("./generate");var alphabet=require("./alphabet");var REDUCE_TIME=1567752802062;var version=7;var counter;var previousSeconds;function build(clusterWorkerId){var str="";var seconds=Math.floor((Date.now()-REDUCE_TIME)*.001);if(seconds===previousSeconds){counter++}else{counter=0;previousSeconds=seconds}str=str+generate(version);str=str+generate(clusterWorkerId);if(counter>0){str=str+generate(counter)}str=str+generate(seconds);return str}module.exports=build},{"./alphabet":2,"./generate":4}],4:[function(require,module,exports){"use strict";var alphabet=require("./alphabet");var random=require("./random/random-byte");var format=require("nanoid/format");function generate(number){var loopCounter=0;var done;var str="";while(!done){str=str+format(random,alphabet.get(),1);done=number<Math.pow(16,loopCounter+1);loopCounter++}return str}module.exports=generate},{"./alphabet":2,"./random/random-byte":7,"nanoid/format":10}],5:[function(require,module,exports){"use strict";var alphabet=require("./alphabet");var build=require("./build");var isValid=require("./is-valid");var clusterWorkerId=require("./util/cluster-worker-id")||0;function seed(seedValue){alphabet.seed(seedValue);return module.exports}function worker(workerId){clusterWorkerId=workerId;return module.exports}function characters(newCharacters){if(newCharacters!==undefined){alphabet.characters(newCharacters)}return alphabet.shuffled()}function generate(){return build(clusterWorkerId)}module.exports=generate;module.exports.generate=generate;module.exports.seed=seed;module.exports.worker=worker;module.exports.characters=characters;module.exports.isValid=isValid},{"./alphabet":2,"./build":3,"./is-valid":6,"./util/cluster-worker-id":9}],6:[function(require,module,exports){"use strict";var alphabet=require("./alphabet");function isShortId(id){if(!id||typeof id!=="string"||id.length<6){return false}var nonAlphabetic=new RegExp("[^"+alphabet.get().replace(/[|\\{}()[\]^$+*?.-]/g,"\\$&")+"]");return!nonAlphabetic.test(id)}module.exports=isShortId},{"./alphabet":2}],7:[function(require,module,exports){"use strict";var crypto=typeof window==="object"&&(window.crypto||window.msCrypto);var randomByte;if(!crypto||!crypto.getRandomValues){randomByte=function(size){var bytes=[];for(var i=0;i<size;i++){bytes.push(Math.floor(Math.random()*256))}return bytes}}else{randomByte=function(size){return crypto.getRandomValues(new Uint8Array(size))}}module.exports=randomByte},{}],8:[function(require,module,exports){"use strict";var seed=1;function getNextValue(){seed=(seed*9301+49297)%233280;return seed/233280}function setSeed(_seed_){seed=_seed_}module.exports={nextValue:getNextValue,seed:setSeed}},{}],9:[function(require,module,exports){"use strict";module.exports=0},{}],10:[function(require,module,exports){module.exports=function(random,alphabet,size){var mask=(2<<Math.log(alphabet.length-1)/Math.LN2)-1;var step=-~(1.6*mask*size/alphabet.length);var id="";while(true){var bytes=random(step);var i=step;while(i--){id+=alphabet[bytes[i]&mask]||"";if(id.length===+size)return id}}}},{}]},{},[1]);
+        document.getElementById("path").value = '/' + shortid(1)()
+    </script>
+</body>
+
+</html>

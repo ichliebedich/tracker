@@ -55,6 +55,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
+	"net/http"
 	"strings"
 
 	"github.com/nats-io/go-nats"
@@ -123,6 +124,11 @@ func (i *NatsService) write(w *WriteArgs) error {
 	// i.ec.BindSendChan(i.Configuration.Context, sendCh)
 	// sendCh <- w.Values
 	return i.ec.Publish(i.Configuration.Context, w.Values)
+}
+
+func (i *NatsService) serve(w *http.ResponseWriter, r *http.Request, s *ServiceArgs) error {
+	//TODO: Nats services
+	return fmt.Errorf("[ERROR] Nats service not implemented")
 }
 
 //////////////////////////////////////// NATS

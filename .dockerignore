@@ -1,3 +1,4 @@
+tests/
 # GIT
 .git
 .gitignore

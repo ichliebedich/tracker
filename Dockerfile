@@ -3,15 +3,32 @@
 # Build with: sudo docker build -t tracker .
 ####################################################################################
 
-FROM debian:stable-slim
-WORKDIR /root/tracker
-ADD . /root/tracker
-EXPOSE 443
-EXPOSE 80
+FROM debian:latest
+EXPOSE 8443 8080 443 80
+
+# update packages and install required ones
+RUN apt update && apt upgrade -y && apt install -y \
+#  golang \
+#  git \
+#  libssl-dev \
+#  python-pip \
+  dnsutils \
+  jq \
+  && apt autoclean -y \
+  && apt autoremove -y
+
+# apt cleanup
+# RUN apt autoclean -y && apt autoremove -y
+
+# build app instead of just publishing
+# RUN go get github.com/dioptre/tracker
+# RUN go install github.com/dioptre/tracker
+# RUN go build
+
 
 ####################################################################################
 
-# ulimit incrase (set in docker templats/aws ecs-task-definition too!!)
+# ulimit increase (set in docker templats/aws ecs-task-definition too!!)
 RUN bash -c 'echo "root hard nofile 16384" >> /etc/security/limits.conf' \
  && bash -c 'echo "root soft nofile 16384" >> /etc/security/limits.conf' \
  && bash -c 'echo "* hard nofile 16384" >> /etc/security/limits.conf' \
@@ -30,37 +47,15 @@ RUN bash -c 'echo "net.core.somaxconn = 8192" >> /etc/sysctl.conf' \
 
 ####################################################################################
 
-# update packages and install required ones
-RUN apt update && apt upgrade -y && apt install -y \
-  golang-1.8-go \
-  supervisor \
-  git \
-  libssl-dev \
-  python-pip \
-  jq \
-  sudo
 
-# apt cleanup
-RUN apt autoclean -y && apt autoremove -y
-
-# install latest AWS CLI
-RUN pip install awscli --upgrade
-
-# build app in production mode
-RUN /usr/lib/go-1.8/bin/go get github.com/dioptre/tracker
-RUN /usr/lib/go-1.8/bin/go install github.com/dioptre/tracker
-RUN /usr/lib/go-1.8/bin/go build
-
-####################################################################################
-
-# copy files to other locations
-COPY supervisord.conf /etc/supervisor/supervisord.conf
-COPY tracker.supervisor.conf /etc/supervisor/conf.d/tracker.supervisor.conf
-
-# make startup script executable
-RUN chmod +x dockercmd.sh
+WORKDIR /app/tracker
+ADD . /app/tracker
+RUN bash -c 'rm /app/tracker/temp.config.json || exit 0'
 
 ####################################################################################
 
 # startup command
-CMD ./dockercmd.sh
+CMD ["/usr/bin/nice", "-n", "5", "/app/tracker/tracker"] 
+# Can also clean logs > /dev/null 2>&1
+#sudo docker build -t tracker .
+#sudo docker run -p 443:443 -p 80:80 tracker

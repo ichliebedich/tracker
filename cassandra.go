@@ -51,7 +51,11 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"math/rand"
+	"net"
+	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -70,8 +74,14 @@ func (i *CassandraService) connect() error {
 	cluster := gocql.NewCluster(i.Configuration.Hosts...)
 	cluster.Keyspace = i.Configuration.Context
 	cluster.Consistency = gocql.LocalOne
+	if i.Configuration.Retries > 0 {
+		cluster.RetryPolicy = &gocql.SimpleRetryPolicy{NumRetries: i.Configuration.Retries}
+	}
 	cluster.Timeout = i.Configuration.Timeout * time.Millisecond
 	cluster.NumConns = i.Configuration.Connections
+	cluster.ReconnectInterval = time.Second
+	cluster.SocketKeepalive = time.Millisecond * 500
+	cluster.MaxPreparedStmts = 10000
 	if i.Configuration.CACert != "" {
 		sslOpts := &gocql.SslOptions{
 			CaPath:                 i.Configuration.CACert,
@@ -91,7 +101,7 @@ func (i *CassandraService) connect() error {
 	i.Configuration.Session = i
 
 	//Setup rand
-	rand.Seed(time.Now().UnixNano())
+	rand.Seed(time.Now().UTC().UnixNano())
 
 	//Setup limit checker (cassandra)
 	if i.AppConfig.ProxyDailyLimit > 0 && i.AppConfig.ProxyDailyLimitCheck == nil && i.AppConfig.ProxyDailyLimitChecker == SERVICE_TYPE_CASSANDRA {
@@ -118,6 +128,480 @@ func (i *CassandraService) close() error {
 func (i *CassandraService) listen() error {
 	//TODO: Listen for cassandra triggers
 	return fmt.Errorf("[ERROR] Cassandra listen not implemented")
+}
+
+func (i *CassandraService) auth(s *ServiceArgs) error {
+	//TODO: AG implement JWT
+	//TODO: AG implement creds (check domain level auth)
+	if *s.Values == nil {
+		return fmt.Errorf("User not provided")
+	}
+	uid := (*s.Values)["uid"]
+	if uid == "" {
+		return fmt.Errorf("User ID not provided")
+	}
+	password := (*s.Values)["password"]
+	if password == "" {
+		return fmt.Errorf("User pass not provided")
+	}
+	var pwd string
+	if err := i.Session.Query(`SELECT pwd FROM accounts where uid=?`, uid).Scan(&pwd); err == nil {
+		if pwd != sha(password) {
+			return fmt.Errorf("Bad pass")
+		}
+		return nil
+	} else {
+		return err
+	}
+
+}
+
+func (i *CassandraService) serve(w *http.ResponseWriter, r *http.Request, s *ServiceArgs) error {
+	switch s.ServiceType {
+	case SVC_POST_AGREE:
+		body, err := ioutil.ReadAll(r.Body)
+		if err != nil {
+			return fmt.Errorf("Bad JS (body)")
+		}
+		if len(body) > 0 {
+			b := make(map[string]interface{})
+			if err := json.Unmarshal(body, &b); err == nil {
+				created := time.Now().UTC()
+				//[hhash]
+				var hhash *string
+				addr := getHost(r)
+				if addr != "" {
+					temp := strconv.FormatInt(int64(hash(addr)), 36)
+					hhash = &temp
+				}
+				ip := getIP(r)
+				var iphash string
+				//128 bits = ipv6
+				iphash = strconv.FormatInt(int64(hash(ip)), 36)
+				iphash = iphash + strconv.FormatInt(int64(hash(ip+iphash)), 36)
+				iphash = iphash + strconv.FormatInt(int64(hash(ip+iphash)), 36)
+				iphash = iphash + strconv.FormatInt(int64(hash(ip+iphash)), 36)
+				browser := r.Header.Get("user-agent")
+				var bhash *string
+				if browser != "" {
+					temp := strconv.FormatInt(int64(hash(browser)), 36)
+					bhash = &temp
+				}
+				var cflags *int64
+				if com, ok := b["cflags"].(float64); ok {
+					temp := int64(com)
+					cflags = &temp
+				}
+				//[country]
+				var country *string
+				var region *string
+				if tz, ok := b["tz"].(string); ok {
+					cleanString(&tz)
+					if ct, oktz := countries[tz]; oktz {
+						country = &ct
+					}
+				}
+				//[latlon]
+				var latlon *geo_point
+				latf, oklatf := b["lat"].(float64)
+				lonf, oklonf := b["lon"].(float64)
+				if oklatf && oklonf {
+					//Float
+					latlon = &geo_point{}
+					latlon.Lat = latf
+					latlon.Lon = lonf
+				} else {
+					//String
+					lats, oklats := b["lat"].(string)
+					lons, oklons := b["lon"].(string)
+					if oklats && oklons {
+						latlon = &geo_point{}
+						latlon.Lat, _ = strconv.ParseFloat(lats, 64)
+						latlon.Lon, _ = strconv.ParseFloat(lons, 64)
+					}
+				}
+				if latlon == nil {
+					if gip, err := GetGeoIP(net.ParseIP(ip)); err == nil && gip != nil {
+						var geoip GeoIP
+						if err := json.Unmarshal(gip, &geoip); err == nil && geoip.Latitude != 0 && geoip.Longitude != 0 {
+							latlon = &geo_point{}
+							latlon.Lat = geoip.Latitude
+							latlon.Lon = geoip.Longitude
+							if geoip.CountryISO2 != "" {
+								country = &geoip.CountryISO2
+							}
+							if geoip.Region != "" {
+								region = &geoip.Region
+							}
+						}
+					}
+				}
+				//Self identification of geo_pol overrules geoip
+				if ct, ok := b["country"].(string); ok {
+					country = &ct
+				}
+				if r, ok := b["region"].(string); ok {
+					region = &r
+				}
+				upperString(country)
+				cleanString(region)
+				if /* results, */ err := i.Session.Query(`INSERT into agreements (
+					vid, 
+					created,  
+					-- compliances,
+					cflags,
+					sid, 
+					uid, 
+					avid,
+					hhash, 
+					app, 
+					rel, 
+
+					url, 
+					ip,
+					iphash, 
+					gaid,
+					idfa,
+					msid,
+					fbid,
+					country, 
+					region,
+					culture, 
+					
+					source,
+					medium,
+					campaign,
+					term, 
+					ref, 
+					rcode, 
+					aff,
+					browser,
+					bhash,
+					device, 
+					
+					os, 
+					tz,
+					--vp,
+					--loc frozen<geo_pol>,
+					latlon,
+					zip,
+					owner,
+					org
+				 ) values (?,?,?,?,?,?,?,?,?, ?,?,?,?,?,?,?,?,?,?, ?,?,?,?,?,?,?,?,?,?, ?,?,?,?,?,?)`, //NB: Removed  'IF NOT EXISTS' so can update
+					b["vid"],
+					created,
+					//compliances map<text,frozen<set<text>>>,
+					cflags,
+					b["sid"],
+					b["uid"],
+					b["avid"],
+					hhash,
+					b["app"],
+					b["rel"],
+
+					b["url"],
+					ip,
+					iphash,
+					b["gaid"],
+					b["idfa"],
+					b["msid"],
+					b["fbid"],
+					country,
+					region,
+					b["culture"],
+
+					b["source"],
+					b["medium"],
+					b["campaign"],
+					b["term"],
+					b["ref"],
+					b["rcode"],
+					b["aff"],
+					browser,
+					bhash,
+					b["device"],
+
+					b["os"],
+					b["tz"],
+					//  vp frozen<viewport>,
+					//  loc frozen<geo_pol>,
+					latlon,
+					b["zip"],
+					b["owner"],
+					b["org"],
+				).Exec(); err != nil {
+					return err
+				}
+
+				i.Session.Query(`INSERT into agreed (
+					vid, 
+					created,  
+					-- compliances,
+					cflags,
+					sid, 
+					uid, 
+					avid,
+					hhash, 
+					app, 
+					rel, 
+
+					url, 
+					ip,
+					iphash, 
+					gaid,
+					idfa,
+					msid,
+					fbid,
+					country, 
+					region,
+					culture, 
+					
+					source,
+					medium,
+					campaign,
+					term, 
+					ref, 
+					rcode, 
+					aff,
+					browser,
+					bhash,
+					device, 
+					
+					os, 
+					tz,
+					--vp,
+					--loc frozen<geo_pol>,
+					latlon,
+					zip,
+					owner,
+					org
+				 ) values (?,?,?,?,?,?,?,?,?, ?,?,?,?,?,?,?,?,?,?, ?,?,?,?,?,?,?,?,?,?, ?,?,?,?,?,?)`, //NB: Removed  'IF NOT EXISTS' so can update
+					b["vid"],
+					created,
+					//compliances map<text,frozen<set<text>>>,
+					cflags,
+					b["sid"],
+					b["uid"],
+					b["avid"],
+					hhash,
+					b["app"],
+					b["rel"],
+
+					b["url"],
+					ip,
+					iphash,
+					b["gaid"],
+					b["idfa"],
+					b["msid"],
+					b["fbid"],
+					country,
+					region,
+					b["culture"],
+
+					b["source"],
+					b["medium"],
+					b["campaign"],
+					b["term"],
+					b["ref"],
+					b["rcode"],
+					b["aff"],
+					browser,
+					bhash,
+					b["device"],
+
+					b["os"],
+					b["tz"],
+					//  vp frozen<viewport>,
+					//  loc frozen<geo_pol>,
+					latlon,
+					b["zip"],
+					b["owner"],
+					b["org"],
+				).Exec()
+
+				(*w).WriteHeader(http.StatusOK)
+				return nil
+			} else {
+				return fmt.Errorf("Bad request (data)")
+			}
+		} else {
+			return fmt.Errorf("Bad request (body)")
+		}
+	case SVC_GET_AGREE:
+		var vid string
+		if len(r.URL.Query()["vid"]) > 0 {
+			vid = r.URL.Query()["vid"][0]
+			if rows, err := i.Session.Query(`SELECT * FROM agreements where vid=?`, vid).Iter().SliceMap(); err == nil {
+				js, err := json.Marshal(rows)
+				(*w).WriteHeader(http.StatusOK)
+				(*w).Header().Set("Content-Type", "application/json")
+				(*w).Write(js)
+				return err
+			} else {
+				return err
+			}
+		} else {
+			(*w).WriteHeader(http.StatusNotFound)
+			(*w).Header().Set("Content-Type", "application/json")
+			(*w).Write([]byte("[]"))
+		}
+		fmt.Println(vid)
+		return nil
+	case SVC_GET_JURISDICTIONS:
+		if jds, err := i.Session.Query(`SELECT * FROM jurisdictions`).Iter().SliceMap(); err == nil {
+			js, err := json.Marshal(jds)
+			(*w).WriteHeader(http.StatusOK)
+			(*w).Header().Set("Content-Type", "application/json")
+			(*w).Write(js)
+			return err
+		} else {
+			return err
+		}
+	case SVC_GET_GEOIP:
+		ip := getIP(r)
+		if len(r.URL.Query()["ip"]) > 0 {
+			ip = r.URL.Query()["ip"][0]
+		}
+		pip := net.ParseIP(ip)
+		if gip, err := GetGeoIP(pip); err == nil && gip != nil {
+			(*w).WriteHeader(http.StatusOK)
+			(*w).Header().Set("Content-Type", "application/json")
+			(*w).Write(gip)
+			return nil
+		} else {
+			if err == nil {
+				return fmt.Errorf("Not Found (IP)")
+			}
+			return err
+		}
+	case SVC_GET_REDIRECTS:
+		if err := i.auth(s); err != nil {
+			return err
+		}
+		if results, err := i.Session.Query(`SELECT * FROM redirect_history`).Iter().SliceMap(); err == nil {
+			json, _ := json.Marshal(map[string]interface{}{"results": results})
+			(*w).Header().Set("Content-Type", "application/json")
+			(*w).WriteHeader(http.StatusOK)
+			(*w).Write(json)
+			return nil
+		} else {
+			return err
+		}
+	case SVC_GET_REDIRECT:
+		//TODO: AG ADD CACHE
+		var redirect string
+		if err := i.Session.Query(`SELECT urlto FROM redirects where urlfrom=?`, fmt.Sprintf("%s%s", r.Host, r.URL.Path)).Scan(&redirect); err == nil {
+			s.Values = &map[string]string{"Redirect": redirect}
+			http.Redirect(*w, r, redirect, http.StatusFound)
+			return nil
+		} else {
+			return err
+		}
+	case SVC_POST_REDIRECT:
+		if err := i.auth(s); err != nil {
+			return err
+		}
+		body, err := ioutil.ReadAll(r.Body)
+		if err != nil {
+			return fmt.Errorf("Bad JS (body)")
+		}
+		if len(body) > 0 {
+			b := make(map[string]interface{})
+			if err := json.Unmarshal(body, &b); err == nil {
+				updated := time.Now().UTC()
+				urlfrom := strings.ToLower(strings.TrimSpace(b["urlfrom"].(string)))
+				urlto := strings.TrimSpace(b["urlto"].(string))
+				if urlfrom == "" || urlto == "" {
+					return fmt.Errorf("Bad URL (null)")
+				}
+				if strings.EqualFold(urlfrom, urlto) {
+					return fmt.Errorf("Bad URL (equal)")
+				}
+				var urltoURL url.URL
+				if checkTo, err := url.Parse(urlto); err != nil {
+					return fmt.Errorf("Bad URL (destination)")
+				} else {
+					urltoURL = *checkTo
+					if !strings.Contains(checkTo.Path, "/rdr/") {
+						for _, d := range i.AppConfig.Domains {
+							if strings.EqualFold(checkTo.Host, strings.TrimSpace(d)) {
+								return fmt.Errorf("Bad URL (self-referential)")
+							}
+						}
+					}
+				}
+				var urlfromURL url.URL
+				if checkFrom, err := url.Parse(urlfrom); err != nil {
+					return fmt.Errorf("Bad URL (from)")
+				} else {
+					urlfromURL = *checkFrom
+				}
+				if len(urlfromURL.Path) < 2 {
+					return fmt.Errorf("Bad URL (from path)")
+				}
+				//[hhash]
+				var hhash *string
+				addr := getHost(r)
+				if addr != "" {
+					temp := strconv.FormatInt(int64(hash(addr)), 36)
+					hhash = &temp
+				}
+
+				if /* results, */ err := i.Session.Query(`INSERT into redirects (
+					 hhash,
+					 urlfrom, 					
+					 urlto,
+					 updated, 
+					 updater 
+				 ) values (?,?,?,?,?)`, //NB: Removed  'IF NOT EXISTS' so can update
+					hhash,
+					strings.ToLower(urlfromURL.Host)+strings.ToLower(urlfromURL.Path),
+					urlto,
+					updated,
+					(*s.Values)["uid"],
+				).Exec(); err != nil {
+					return err
+				}
+				// Removed 'IF NOT EXISTS'
+				//.NoSkipMetadata().Iter().SliceMap()
+				// if false == results[0]["[applied]"] {
+				// 	return fmt.Errorf("URL exists")
+				// }
+				if err := i.Session.Query(`INSERT into redirect_history (
+					 urlfrom, 
+					 hostfrom,
+					 slugfrom, 
+					 urlto, 
+					 hostto, 
+					 pathto, 
+					 searchto, 
+					 updated, 
+					 updater
+				 ) values (?,?,?,?,?,?,?,?,?)`,
+					urlfrom,
+					strings.ToLower(urlfromURL.Host),
+					strings.ToLower(urlfromURL.Path),
+					urlto,
+					strings.ToLower(urltoURL.Host),
+					strings.ToLower(urltoURL.Path),
+					b["searchto"],
+					updated,
+					(*s.Values)["uid"],
+				).Exec(); err != nil {
+					return err
+				}
+				(*w).WriteHeader(http.StatusOK)
+				return nil
+			} else {
+				return fmt.Errorf("Bad request (data)")
+			}
+		} else {
+			return fmt.Errorf("Bad request (body)")
+		}
+	default:
+		return fmt.Errorf("[ERROR] Cassandra service not implemented %d", s.ServiceType)
+	}
+
 }
 
 //////////////////////////////////////// C*
@@ -174,33 +658,60 @@ func (i *CassandraService) write(w *WriteArgs) error {
 			level = &temp
 		}
 
+		var topic string
+		if ttemp1, ok := v["topic"].(string); ok {
+			topic = ttemp1
+		} else {
+			if ttemp2, ok2 := v["id"].(string); ok2 {
+				topic = ttemp2
+			}
+		}
+
+		cleanInterfaceString(v["ip"])
+		cleanInterfaceString(v["topic"])
+		cleanInterfaceString(v["name"])
+		cleanInterfaceString(v["host"])
+		cleanInterfaceString(v["hostname"])
+		cleanInterfaceString(v["msg"])
+
+		var iphash string
+		if temp, ok := v["ip"].(string); ok && temp != "" {
+			//128 bits = ipv6
+			iphash = strconv.FormatInt(int64(hash(temp)), 36)
+			iphash = iphash + strconv.FormatInt(int64(hash(temp+iphash)), 36)
+			iphash = iphash + strconv.FormatInt(int64(hash(temp+iphash)), 36)
+			iphash = iphash + strconv.FormatInt(int64(hash(temp+iphash)), 36)
+		}
+
 		return i.Session.Query(`INSERT INTO logs
-		(
-			id,
-			ldate,
-			created,
-			ltime,
-			topic, 
-			name, 
-			host, 
-			hostname, 
-			owner,
-			ip,
-			level, 
-			msg,
-			params
-		) 
-		values (?,?,?,?,?,?,?,?,?,? ,?,?,?)`, //13
+		 (
+			 id,
+			 ldate,
+			 created,
+			 ltime,
+			 topic, 
+			 name, 
+			 host, 
+			 hostname, 
+			 owner,
+			 ip,
+			 iphash,
+			 level, 
+			 msg,
+			 params
+		 ) 
+		 values (?,?,?,?,?,?,?,?,?,? ,?,?,?,?)`, //14
 			gocql.TimeUUID(),
 			v["ldate"],
 			time.Now().UTC(),
 			ltime,
-			v["id"],
+			topic,
 			v["name"],
 			v["host"],
 			v["hostname"],
 			v["owner"],
 			v["ip"],
+			iphash,
 			level,
 			v["msg"],
 			v["params"]).Exec()
@@ -213,8 +724,58 @@ func (i *CassandraService) write(w *WriteArgs) error {
 		//go func() {
 
 		//////////////////////////////////////////////
+		//FIX CASE
+		//////////////////////////////////////////////
+		cleanString(&(w.Browser))
+		cleanString(&(w.Host))
+		cleanInterfaceString(v["app"])
+		cleanInterfaceString(v["rel"])
+		cleanInterfaceString(v["ptyp"])
+		cleanInterfaceString(v["xid"])
+		cleanInterfaceString(v["split"])
+		cleanInterfaceString(v["ename"])
+		cleanInterfaceString(v["etyp"])
+		cleanInterfaceString(v["sink"])
+		cleanInterfaceString(v["source"])
+		cleanInterfaceString(v["medium"])
+		cleanInterfaceString(v["campaign"])
+		cleanInterfaceString(v["term"])
+		cleanInterfaceString(v["rcode"])
+		cleanInterfaceString(v["aff"])
+		cleanInterfaceString(v["device"])
+		cleanInterfaceString(v["os"])
+		cleanInterfaceString(v["relation"])
+
+		//////////////////////////////////////////////
 		//FIX VARS
 		//////////////////////////////////////////////
+		//[hhash]
+		var hhash *string
+		if w.Host != "" {
+			temp := strconv.FormatInt(int64(hash(w.Host)), 36)
+			hhash = &temp
+		}
+		//[iphash]
+		var iphash string
+		if w.IP != "" {
+			//128 bits = ipv6
+			iphash = strconv.FormatInt(int64(hash(w.IP)), 36)
+			iphash = iphash + strconv.FormatInt(int64(hash(w.IP+iphash)), 36)
+			iphash = iphash + strconv.FormatInt(int64(hash(w.IP+iphash)), 36)
+			iphash = iphash + strconv.FormatInt(int64(hash(w.IP+iphash)), 36)
+		}
+		//check host account id
+		//don't track without it
+		//SEVERELY LIMITING SO DON'T USE IT
+		var hAccountID *string
+		if w.Host != "" && i.AppConfig.AccountHashMixer != "" {
+			temp := strconv.FormatInt(int64(hash(w.Host+i.AppConfig.AccountHashMixer)), 36)
+			hAccountID = &temp
+			if v["acct"].(string) != *hAccountID {
+				err := fmt.Errorf("[ERROR] Host: %s Account-ID: %s Incorrect for (acct): %s", w.Host, *hAccountID, v["acct"])
+				return err
+			}
+		}
 		//[updated]
 		updated := time.Now().UTC()
 		//[rid]
@@ -229,6 +790,17 @@ func (i *CassandraService) write(w *WriteArgs) error {
 		if temp, ok := v["auth"].(string); ok {
 			if temp2, err := gocql.ParseUUID(temp); err == nil {
 				auth = &temp2
+			}
+		}
+		//[country]
+		var country *string
+		var region *string
+		var city *string
+		zip := v["zip"]
+		ensureInterfaceString(zip)
+		if tz, ok := v["tz"].(string); ok {
+			if ct, oktz := countries[tz]; oktz {
+				country = &ct
 			}
 		}
 		//[latlon]
@@ -250,6 +822,47 @@ func (i *CassandraService) write(w *WriteArgs) error {
 				latlon.Lon, _ = strconv.ParseFloat(lons, 64)
 			}
 		}
+		if latlon == nil {
+			if gip, err := GetGeoIP(net.ParseIP(w.IP)); err == nil && gip != nil {
+				var geoip GeoIP
+				if err := json.Unmarshal(gip, &geoip); err == nil && geoip.Latitude != 0 && geoip.Longitude != 0 {
+					latlon = &geo_point{}
+					latlon.Lat = geoip.Latitude
+					latlon.Lon = geoip.Longitude
+					if geoip.CountryISO2 != "" {
+						country = &geoip.CountryISO2
+					}
+					if geoip.Region != "" {
+						region = &geoip.Region
+					}
+					if geoip.City != "" {
+						city = &geoip.City
+					}
+					if zip == nil && geoip.Zip != "" {
+						zip = &geoip.Zip
+					}
+
+				}
+			}
+		}
+		if !i.AppConfig.UseRegionDescriptions {
+			//country = nil
+			region = nil
+			city = nil
+		}
+		//Self identification of geo_pol overrules geoip
+		if ct, ok := v["country"].(string); ok {
+			country = &ct
+		}
+		if r, ok := v["region"].(string); ok {
+			region = &r
+		}
+		if r, ok := v["city"].(string); ok {
+			city = &r
+		}
+		upperString(country)
+		cleanString(region)
+		cleanString(city)
 		//[vp]
 		var vp *viewport
 		width, okwf := v["w"].(float64)
@@ -280,6 +893,14 @@ func (i *CassandraService) write(w *WriteArgs) error {
 			temp := int64(ver)
 			version = &temp
 		}
+		//[cflags] - compliance flags
+		var cflags *int64
+		if com, ok := v["cflags"].(int64); ok {
+			cflags = &com
+		} else if com, ok := v["cflags"].(float64); ok {
+			temp := int64(com)
+			cflags = &temp
+		}
 		//[bhash]
 		var bhash *string
 		if w.Browser != "" {
@@ -306,9 +927,14 @@ func (i *CassandraService) write(w *WriteArgs) error {
 		}
 		if params != nil {
 			//De-identify data
+			delete(*params, "hhash")
+			delete(*params, "iphash")
+			delete(*params, "cell")
+			delete(*params, "chash")
 			delete(*params, "email")
 			delete(*params, "ehash")
 			delete(*params, "uname")
+			delete(*params, "acct")
 			//Remove column params/duplicates
 			delete(*params, "first")
 			delete(*params, "lat")
@@ -317,10 +943,14 @@ func (i *CassandraService) write(w *WriteArgs) error {
 			delete(*params, "h")
 			delete(*params, "params")
 
+			delete(*params, "tr")
+			delete(*params, "time")
 			delete(*params, "vid")
+			delete(*params, "did")
 			delete(*params, "sid")
 			delete(*params, "app")
 			delete(*params, "rel")
+			delete(*params, "cflags")
 			delete(*params, "created")
 			delete(*params, "uid")
 			delete(*params, "last")
@@ -333,15 +963,20 @@ func (i *CassandraService) write(w *WriteArgs) error {
 			delete(*params, "duration")
 			delete(*params, "xid")
 			delete(*params, "split")
-			delete(*params, "ename")
 			delete(*params, "etyp")
 			delete(*params, "ver")
 			delete(*params, "sink")
 			delete(*params, "score")
 			delete(*params, "params")
+			delete(*params, "gaid")
+			delete(*params, "idfa")
+			delete(*params, "msid")
+			delete(*params, "fbid")
 			delete(*params, "country")
+			delete(*params, "region")
+			delete(*params, "city")
+			delete(*params, "zip")
 			delete(*params, "culture")
-			delete(*params, "term")
 			delete(*params, "ref")
 			delete(*params, "aff")
 			delete(*params, "browser")
@@ -351,8 +986,61 @@ func (i *CassandraService) write(w *WriteArgs) error {
 			delete(*params, "vp")
 			delete(*params, "targets")
 			delete(*params, "rid")
+			delete(*params, "relation")
+			delete(*params, "rcode")
+
+			delete(*params, "ename")
+			delete(*params, "source")
+			delete(*params, "content")
+			delete(*params, "medium")
+			delete(*params, "campaign")
+			delete(*params, "term")
+
 			if len(*params) == 0 {
 				params = nil
+			}
+		}
+
+		var nparams *map[string]float64
+		if params != nil {
+			tparams := make(map[string]float64)
+			for npk, npv := range *params {
+				if d, ok := npv.(float64); ok {
+					tparams[npk] = d
+					(*params)[npk] = fmt.Sprintf("%f", d) //let's keep both string and numerical
+					//delete(*params, npk) //we delete the old copy
+					continue
+				}
+				if npb, ok := npv.(bool); ok {
+					if npb {
+						tparams[npk] = 1
+					} else {
+						tparams[npk] = 0
+					}
+					(*params)[npk] = fmt.Sprintf("%v", npb)
+					continue
+				}
+				if nps, ok := npv.(string); !ok {
+					//UNKNOWN TYPE
+					(*params)[npk] = fmt.Sprintf("%+v", npv) //clean up instead
+					//delete(*params, npk) //remove if not a string
+				} else {
+					if strings.TrimSpace(strings.ToLower(nps)) == "true" {
+						tparams[npk] = 1
+						continue
+					}
+					if strings.TrimSpace(strings.ToLower(nps)) == "false" {
+						tparams[npk] = 0
+						continue
+					}
+					if npf, err := strconv.ParseFloat(nps, 64); err == nil && len(nps) > 0 {
+						tparams[npk] = npf
+					}
+
+				}
+			}
+			if len(tparams) > 0 {
+				nparams = &tparams
 			}
 		}
 
@@ -361,14 +1049,7 @@ func (i *CassandraService) write(w *WriteArgs) error {
 		c := strings.Split(w.Language, ",")
 		if len(c) > 0 {
 			culture = &c[0]
-		}
-		//[country]
-		//TODO: Use GeoIP too
-		var country *string
-		if tz, ok := v["tz"].(string); ok {
-			if ct, oktz := countries[tz]; oktz {
-				country = &ct
-			}
+			cleanString(culture)
 		}
 
 		//WARNING: w.URI has destructive changes here
@@ -376,15 +1057,18 @@ func (i *CassandraService) write(w *WriteArgs) error {
 		if i.AppConfig.IsUrlFiltered {
 			if last, ok := v["last"].(string); ok {
 				filterUrl(i.AppConfig, &last, &i.AppConfig.UrlFilterMatchGroup)
+				filterUrlPrefix(&last)
 				v["last"] = last
 			}
 			if url, ok := v["url"].(string); ok {
 				filterUrl(i.AppConfig, &url, &i.AppConfig.UrlFilterMatchGroup)
+				filterUrlPrefix(&url)
 				v["url"] = url
 			} else {
 				//check for /tr/ /pub/ /img/ (ignore)
 				if !regexInternalURI.MatchString(w.URI) {
 					filterUrl(i.AppConfig, &w.URI, &i.AppConfig.UrlFilterMatchGroup)
+					filterUrlPrefix(&w.URI)
 					v["url"] = w.URI
 				} else {
 					delete(v, "url")
@@ -392,15 +1076,18 @@ func (i *CassandraService) write(w *WriteArgs) error {
 			}
 		} else {
 			if last, ok := v["last"].(string); ok {
+				filterUrlPrefix(&last)
 				filterUrlAppendix(&last)
 				v["last"] = last
 			}
 			if url, ok := v["url"].(string); ok {
+				filterUrlPrefix(&url)
 				filterUrlAppendix(&url)
 				v["url"] = url
 			} else {
 				//check for /tr/ /pub/ /img/ (ignore)
 				if !regexInternalURI.MatchString(w.URI) {
+					filterUrlPrefix(&w.URI)
 					filterUrlAppendix(&w.URI)
 					v["url"] = w.URI
 				} else {
@@ -409,11 +1096,23 @@ func (i *CassandraService) write(w *WriteArgs) error {
 			}
 		}
 
+		//[Cell Phone]
+		var chash *string
+		if temp, ok := v["chash"].(string); ok {
+			chash = &temp
+		} else if temp, ok := v["cell"].(string); ok {
+			temp = strings.ToLower(strings.TrimSpace(temp))
+			temp = sha(i.AppConfig.PrefixPrivateHash + temp)
+			chash = &temp
+		}
+		delete(v, "cell")
+
 		//[Email]
 		var ehash *string
 		if temp, ok := v["ehash"].(string); ok {
 			ehash = &temp
 		} else if temp, ok := v["email"].(string); ok {
+			temp = strings.ToLower(strings.TrimSpace(temp))
 			temp = sha(i.AppConfig.PrefixPrivateHash + temp)
 			ehash = &temp
 		}
@@ -424,6 +1123,7 @@ func (i *CassandraService) write(w *WriteArgs) error {
 		if temp, ok := v["uhash"].(string); ok {
 			uhash = &temp
 		} else if temp, ok := v["uname"].(string); ok {
+			temp = strings.ToLower(strings.TrimSpace(temp))
 			temp = sha(i.AppConfig.PrefixPrivateHash + temp)
 			uhash = &temp
 		}
@@ -433,7 +1133,8 @@ func (i *CassandraService) write(w *WriteArgs) error {
 		if w.EventID.Timestamp() == 0 {
 			w.EventID = gocql.TimeUUID()
 		}
-		//[vid]
+
+		//[vid] - default
 		isNew := false
 		if vidstring, ok := v["vid"].(string); !ok {
 			v["vid"] = gocql.TimeUUID()
@@ -446,6 +1147,16 @@ func (i *CassandraService) write(w *WriteArgs) error {
 				isNew = true
 			}
 		}
+
+		//[uid] - let's overwrite the vid if we have a uid
+		if uidstring, ok := v["uid"].(string); ok {
+			tempuid, _ := gocql.ParseUUID(uidstring)
+			if tempuid.Timestamp() != 0 {
+				v["vid"] = v["uid"]
+				isNew = false
+			}
+		}
+
 		//[sid]
 		if sidstring, ok := v["sid"].(string); !ok {
 			if isNew {
@@ -467,51 +1178,73 @@ func (i *CassandraService) write(w *WriteArgs) error {
 		//////////////////////////////////////////////
 
 		//ips
-		if xerr := i.Session.Query(`UPDATE ips set total=total+1 where ip=?`,
-			w.IP).Exec(); xerr != nil && i.AppConfig.Debug {
+		if xerr := i.Session.Query(`UPDATE ips set total=total+1 where hhash=? AND ip=?`,
+			hhash, w.IP).Exec(); xerr != nil && i.AppConfig.Debug {
 			fmt.Println("C*[ips]:", xerr)
+		}
+
+		//routed
+		if xerr := i.Session.Query(`UPDATE routed set url=? where hhash=? AND ip=?`,
+			v["url"], hhash, w.IP).Exec(); xerr != nil && i.AppConfig.Debug {
+			fmt.Println("C*[routed]:", xerr)
 		}
 
 		//events
 		if xerr := i.Session.Query(`INSERT into events 
-			(
-				eid,
-				vid, 
-				sid, 
-				app,
-				rel,
-				created,
-				uid,
-				last,
-				url,
-				ip,
-				latlon,
-				ptyp,
-				bhash,
-				auth,
-				duration,
-				xid,
-				split,
-				ename,
-				etyp,
-				ver,
-				sink,
-				score,							
-				params,
-				targets,
-				rid
-			) 
-			values (?,?,?,?,?,?,?,?,?,? ,?,?,?,?,?,?,?,?,?,? ,?,?,?,?,?)`, //25
+			 (
+				 eid,
+				 vid, 
+				 sid,
+				 hhash, 
+				 app,
+				 rel,
+				 cflags,
+				 created,
+				 uid,
+				 last,
+				 url,
+				 ip,
+				 iphash,
+				 latlon,
+				 ptyp,
+				 bhash,
+				 auth,
+				 duration,
+				 xid,
+				 split,
+				 ename,
+				 source,
+				 medium,
+				 campaign,
+				 country,
+				 region,
+				 city,
+				 zip,
+				 term,
+				 etyp,
+				 ver,
+				 sink,
+				 score,							
+				 params,
+				 nparams,
+				 targets,
+				 rid,
+				 relation
+			 ) 
+			 values (?,?,?,?,?,?,?,?,?,? ,?,?,?,?,?,?,?,?,?,? ,?,?,?,?,?,?,?,?,?,? ,?,?,?,?,?,?,?,?)`, //38
 			w.EventID,
 			v["vid"],
 			v["sid"],
+			hhash,
 			v["app"],
 			v["rel"],
+			cflags,
 			updated,
 			v["uid"],
 			v["last"],
 			v["url"],
 			w.IP,
+			iphash,
 			latlon,
 			v["ptyp"],
 			bhash,
@@ -520,14 +1253,107 @@ func (i *CassandraService) write(w *WriteArgs) error {
 			v["xid"],
 			v["split"],
 			v["ename"],
+			v["source"],
+			v["medium"],
+			v["campaign"],
+			country,
+			region,
+			city,
+			zip,
+			v["term"],
 			v["etyp"],
 			version,
 			v["sink"],
 			score,
 			params,
+			nparams,
 			v["targets"],
-			rid).Exec(); xerr != nil && i.AppConfig.Debug {
+			rid,
+			v["relation"]).Exec(); xerr != nil && i.AppConfig.Debug {
 			fmt.Println("C*[events]:", xerr)
+		}
+
+		if xerr := i.Session.Query(`INSERT into events_recent 
+			 (
+				 eid,
+				 vid, 
+				 sid,
+				 hhash, 
+				 app,
+				 rel,
+				 cflags,
+				 created,
+				 uid,
+				 last,
+				 url,
+				 ip,
+				 iphash,
+				 latlon,
+				 ptyp,
+				 bhash,
+				 auth,
+				 duration,
+				 xid,
+				 split,
+				 ename,
+				 source,
+				 medium,
+				 campaign,
+				 country,
+				 region,
+				 city,
+				 zip,
+				 term,
+				 etyp,
+				 ver,
+				 sink,
+				 score,							
+				 params,
+				 nparams,
+				 targets,
+				 rid,
+				 relation
+			 ) 
+			 values (?,?,?,?,?,?,?,?,?,? ,?,?,?,?,?,?,?,?,?,? ,?,?,?,?,?,?,?,?,?,? ,?,?,?,?,?,?,?,?)`, //38
+			w.EventID,
+			v["vid"],
+			v["sid"],
+			hhash,
+			v["app"],
+			v["rel"],
+			cflags,
+			updated,
+			v["uid"],
+			v["last"],
+			v["url"],
+			w.IP,
+			iphash,
+			latlon,
+			v["ptyp"],
+			bhash,
+			auth,
+			duration,
+			v["xid"],
+			v["split"],
+			v["ename"],
+			v["source"],
+			v["medium"],
+			v["campaign"],
+			country,
+			region,
+			city,
+			zip,
+			v["term"],
+			v["etyp"],
+			version,
+			v["sink"],
+			score,
+			params,
+			nparams,
+			v["targets"],
+			rid,
+			v["relation"]).Exec(); xerr != nil && i.AppConfig.Debug {
+			fmt.Println("C*[events_recent]:", xerr)
 		}
 
 		//Exclude from params in sessions and visitors. Note: more above.
@@ -542,13 +1368,16 @@ func (i *CassandraService) write(w *WriteArgs) error {
 
 		if !w.IsServer {
 
+
+			w.SaveCookie = true
+
 			//[first]
 			isFirst := isNew || (v["first"] != "false")
 
 			//hits
 			if _, ok := v["url"].(string); ok {
-				if xerr := i.Session.Query(`UPDATE hits set total=total+1 where url=?`,
-					v["url"]).Exec(); xerr != nil && i.AppConfig.Debug {
+				if xerr := i.Session.Query(`UPDATE hits set total=total+1 where hhash=? AND url=?`,
+					hhash, v["url"]).Exec(); xerr != nil && i.AppConfig.Debug {
 					fmt.Println("C*[hits]:", xerr)
 				}
 			}
@@ -567,15 +1396,16 @@ func (i *CassandraService) write(w *WriteArgs) error {
 
 			//outcome
 			if outcome, ok := v["outcome"].(string); ok {
-				if xerr := i.Session.Query(`UPDATE outcomes set total=total+1 where outcome=? AND sink=? AND created=? AND url=?`, outcome, v["sink"], updated, v["url"]).Exec(); xerr != nil && i.AppConfig.Debug {
+				if xerr := i.Session.Query(`UPDATE outcomes set total=total+1 where hhash=? AND outcome=? AND sink=? AND created=? AND url=?`,
+					hhash, outcome, v["sink"], updated, v["url"]).Exec(); xerr != nil && i.AppConfig.Debug {
 					fmt.Println("C*[outcomes]:", xerr)
 				}
 			}
 
 			//referrers
 			if _, ok := v["last"].(string); ok {
-				if xerr := i.Session.Query(`UPDATE referrers set total=total+1 where url=?`,
-					v["last"]).Exec(); xerr != nil && i.AppConfig.Debug {
+				if xerr := i.Session.Query(`UPDATE referrers set total=total+1 where hhash=? AND url=?`,
+					hhash, v["last"]).Exec(); xerr != nil && i.AppConfig.Debug {
 					fmt.Println("C*[referrers]:", xerr)
 				}
 			}
@@ -583,35 +1413,71 @@ func (i *CassandraService) write(w *WriteArgs) error {
 			//referrals
 			if v["ref"] != nil {
 				if xerr := i.Session.Query(`INSERT into referrals 
-					(
-						vid, 
-						ref
-					) 
-					values (?,?) IF NOT EXISTS`, //2
+					 (
+						 hhash,
+						 vid, 
+						 ref
+					 ) 
+					 values (?,?,?) IF NOT EXISTS`, //3
+					hhash,
 					v["vid"],
 					v["ref"]).Exec(); xerr != nil && i.AppConfig.Debug {
 					fmt.Println("C*[referrals]:", xerr)
 				}
 			}
 
+			//referred
+			if v["rcode"] != nil {
+				if xerr := i.Session.Query(`INSERT into referred 
+					 (
+						 hhash,
+						 vid, 
+						 rcode
+					 ) 
+					 values (?,?,?) IF NOT EXISTS`, //3
+					hhash,
+					v["vid"],
+					v["rcode"]).Exec(); xerr != nil && i.AppConfig.Debug {
+					fmt.Println("C*[referred]:", xerr)
+				}
+			}
+
+			//hosts
+			if w.Host != "" {
+				if xerr := i.Session.Query(`INSERT into hosts 
+					 (
+						 hhash,
+						 hostname						
+					 ) 
+					 values (?,?) IF NOT EXISTS`, //2
+					hhash,
+					w.Host).Exec(); xerr != nil && i.AppConfig.Debug {
+					fmt.Println("C*[hosts]:", xerr)
+				}
+			}
+
 			//browsers
-			if xerr := i.Session.Query(`UPDATE browsers set total=total+1 where browser=? AND bhash=?`,
-				w.Browser, bhash).Exec(); xerr != nil && i.AppConfig.Debug {
+			if xerr := i.Session.Query(`UPDATE browsers set total=total+1 where hhash=? AND browser=? AND bhash=?`,
+				hhash, w.Browser, bhash).Exec(); xerr != nil && i.AppConfig.Debug {
 				fmt.Println("C*[browsers]:", xerr)
 			}
 
 			//nodes
 			if xerr := i.Session.Query(`INSERT into nodes 
-				(
-					vid, 
-					uid,
-					ip,
-					sid
-				) 
-				values (?,?,?,?)`, //4
+				 (
+					 hhash,
+					 vid, 
+					 uid,
+					 ip,
+					 iphash,
+					 sid
+				 ) 
+				 values (?,?,?,?,?,?)`, //6
+				hhash,
 				v["vid"],
 				v["uid"],
 				w.IP,
+				iphash,
 				v["sid"]).Exec(); xerr != nil && i.AppConfig.Debug {
 				fmt.Println("C*[nodes]:", xerr)
 			}
@@ -619,13 +1485,15 @@ func (i *CassandraService) write(w *WriteArgs) error {
 			//locations
 			if latlon != nil {
 				if xerr := i.Session.Query(`INSERT into locations 
-				(
-					vid, 
-					latlon,
-					uid,
-					sid
-				) 
-				values (?,?,?,?)`, //4
+				 (
+					 hhash,
+					 vid, 
+					 latlon,
+					 uid,
+					 sid
+				 ) 
+				 values (?,?,?,?,?)`, //5
+					hhash,
 					v["vid"],
 					latlon,
 					v["uid"],
@@ -637,12 +1505,14 @@ func (i *CassandraService) write(w *WriteArgs) error {
 			//alias
 			if v["uid"] != nil {
 				if xerr := i.Session.Query(`INSERT into aliases 
-					(
-						vid, 
-						uid,
-						sid
-					) 
-					values (?,?,?)`, //3
+					 (
+						 hhash,
+						 vid, 
+						 uid,
+						 sid
+					 ) 
+					 values (?,?,?,?)`, //4
+					hhash,
 					v["vid"],
 					v["uid"],
 					v["sid"]).Exec(); xerr != nil && i.AppConfig.Debug {
@@ -653,12 +1523,14 @@ func (i *CassandraService) write(w *WriteArgs) error {
 			//users
 			if v["uid"] != nil {
 				if xerr := i.Session.Query(`INSERT into users 
-					(
-						vid, 
-						uid,
-						sid
-					) 
-					values (?,?,?)`, //3
+					 (
+						 hhash,
+						 vid, 
+						 uid,
+						 sid
+					 ) 
+					 values (?,?,?,?)`, //4
+					hhash,
 					v["vid"],
 					v["uid"],
 					v["sid"]).Exec(); xerr != nil && i.AppConfig.Debug {
@@ -669,12 +1541,14 @@ func (i *CassandraService) write(w *WriteArgs) error {
 			//uhash
 			if uhash != nil {
 				if xerr := i.Session.Query(`INSERT into usernames 
-					(
-						vid, 
-						uhash,
-						sid
-					) 
-					values (?,?,?)`, //3
+					 (
+						 hhash,
+						 vid, 
+						 uhash,
+						 sid
+					 ) 
+					 values (?,?,?,?)`, //4
+					hhash,
 					v["vid"],
 					uhash,
 					v["sid"]).Exec(); xerr != nil && i.AppConfig.Debug {
@@ -685,12 +1559,14 @@ func (i *CassandraService) write(w *WriteArgs) error {
 			//ehash
 			if ehash != nil {
 				if xerr := i.Session.Query(`INSERT into emails
-					(
-						vid, 
-						ehash,
-						sid
-					) 
-					values (?,?,?)`, //3
+					 (
+						 hhash,
+						 vid, 
+						 ehash,
+						 sid
+					 ) 
+					 values (?,?,?,?)`, //4
+					hhash,
 					v["vid"],
 					ehash,
 					v["sid"]).Exec(); xerr != nil && i.AppConfig.Debug {
@@ -698,61 +1574,97 @@ func (i *CassandraService) write(w *WriteArgs) error {
 				}
 			}
 
+			//chash
+			if chash != nil {
+				if xerr := i.Session.Query(`INSERT into cells
+					 (
+						 hhash,
+						 vid, 
+						 chash,
+						 sid
+					 ) 
+					 values (?,?,?,?)`, //4
+					hhash,
+					v["vid"],
+					chash,
+					v["sid"]).Exec(); xerr != nil && i.AppConfig.Debug {
+					fmt.Println("C*[cells]:", xerr)
+				}
+			}
+
 			//reqs
-			if xerr := i.Session.Query(`UPDATE reqs set total=total+1 where vid=?`,
-				v["vid"]).Exec(); xerr != nil && i.AppConfig.Debug {
+			if xerr := i.Session.Query(`UPDATE reqs set total=total+1 where hhash=? AND vid=?`,
+				hhash, v["vid"]).Exec(); xerr != nil && i.AppConfig.Debug {
 				fmt.Println("C*[reqs]:", xerr)
 			}
 
 			if isNew || isFirst {
 				//vistors
 				if xerr := i.Session.Query(`INSERT into visitors 
-                        (
-                            vid, 
-							sid, 
-							app,
-							rel,
-							created,
-							uid,
-                            last,
-							url,
-							ip,
-							latlon,
-							ptyp,
-							bhash,
-							auth,
-							xid,
-							split,
-							ename,
-							etyp,
-							ver,
-							sink,
-							score,							
-                            params,
-							country,
-							culture,
-							source,
-							medium,
-							campaign,
-							term,
-							ref,
-							aff,
-							browser,
-							device,
-							os,
-							tz,
-							vp
-                        ) 
-                        values (?,?,?,?,?,?,?,?,?,? ,?,?,?,?,?,?,?,?,?,? ,?,?,?,?,?,?,?,?,?,? ,?,?,?,?) IF NOT EXISTS`, //34
+						 (
+							 vid, 
+							 did,
+							 sid, 
+							 hhash,
+							 app,
+							 rel,
+							 cflags,
+							 created,
+							 uid,
+							 last,
+							 url,
+							 ip,
+							 iphash,
+							 latlon,
+							 ptyp,
+							 bhash,
+							 auth,
+							 xid,
+							 split,
+							 ename,
+							 etyp,
+							 ver,
+							 sink,
+							 score,							
+							 params,
+							 nparams,
+							 gaid,
+							 idfa,
+							 msid,
+							 fbid,
+							 country,
+							 region,
+							 city,
+							 zip,
+							 culture,
+							 source,
+							 medium,
+							 campaign,
+							 term,
+							 ref,
+							 rcode,
+							 aff,
+							 browser,
+							 device,
+							 os,
+							 tz,
+							 vp
+						 ) 
+						 values (?,?,?,?,?,?,?,?,?,? ,?,?,?,?,?,?,?,?,?,? ,?,?,?,?,?,?,?,?,?,? ,?,?,?,?,?,?,?,?,?,? ,?,?,?,?,?,?,?) 
+						 IF NOT EXISTS`, //47
 					v["vid"],
+					v["did"],
 					v["sid"],
+					hhash,
 					v["app"],
 					v["rel"],
+					cflags,
 					updated,
 					v["uid"],
 					v["last"],
 					v["url"],
 					w.IP,
+					iphash,
 					latlon,
 					v["ptyp"],
 					bhash,
@@ -765,13 +1677,22 @@ func (i *CassandraService) write(w *WriteArgs) error {
 					v["sink"],
 					score,
 					params,
+					nparams,
+					v["gaid"],
+					v["idfa"],
+					v["msid"],
+					v["fbid"],
 					country,
+					region,
+					city,
+					zip,
 					culture,
 					v["source"],
 					v["medium"],
 					v["campaign"],
 					v["term"],
 					v["ref"],
+					v["rcode"],
 					v["aff"],
 					w.Browser,
 					v["device"],
@@ -783,53 +1704,71 @@ func (i *CassandraService) write(w *WriteArgs) error {
 
 				//starts
 				if xerr := i.Session.Query(`INSERT into sessions 
-                        (
-                            vid, 
-							sid, 
-							app,
-							rel,
-							created,
-							uid,
-                            last,
-							url,
-							ip,
-							latlon,
-							ptyp,
-							bhash,
-							auth,
-                            duration,
-							xid,
-							split,
-							ename,
-							etyp,
-							ver,
-							sink,
-							score,							
-                            params,
-							country,
-							culture,
-							source,
-							medium,
-							campaign,
-							term,
-							ref,
-							aff,
-							browser,
-							device,
-							os,
-							tz,
-							vp                        
-						) 
-                        values (?,?,?,?,?,?,?,?,?,? ,?,?,?,?,?,?,?,?,?,? ,?,?,?,?,?,?,?,?,?,? ,?,?,?,?,?) IF NOT EXISTS`, //35
+						 (
+							 vid, 
+							 did,
+							 sid, 
+							 hhash,
+							 app,
+							 rel,
+							 cflags,
+							 created,
+							 uid,
+							 last,
+							 url,
+							 ip,
+							 iphash,
+							 latlon,
+							 ptyp,
+							 bhash,
+							 auth,
+							 duration,
+							 xid,
+							 split,
+							 ename,
+							 etyp,
+							 ver,
+							 sink,
+							 score,							
+							 params,
+							 nparams,
+							 gaid,
+							 idfa,
+							 msid,
+							 fbid,
+							 country,
+							 region,
+							 city,
+							 zip,
+							 culture,
+							 source,
+							 medium,
+							 campaign,
+							 term,
+							 ref,
+							 rcode,
+							 aff,
+							 browser,
+							 device,
+							 os,
+							 tz,
+							 vp                        
+						 ) 
+						 values (?,?,?,?,?,?,?,?,?,? ,?,?,?,?,?,?,?,?,?,? ,?,?,?,?,?,?,?,?,?,? ,?,?,?,?,?,?,?,?,?,? ,?,?,?,?,?,?,?,?) 
+						 IF NOT EXISTS`, //48
 					v["vid"],
+					v["did"],
 					v["sid"],
+					hhash,
 					v["app"],
 					v["rel"],
+					cflags,
 					updated,
 					v["uid"],
 					v["last"],
 					v["url"],
 					w.IP,
+					iphash,
 					latlon,
 					v["ptyp"],
 					bhash,
@@ -843,13 +1782,22 @@ func (i *CassandraService) write(w *WriteArgs) error {
 					v["sink"],
 					score,
 					params,
+					nparams,
+					v["gaid"],
+					v["idfa"],
+					v["msid"],
+					v["fbid"],
 					country,
+					region,
+					city,
+					zip,
 					culture,
 					v["source"],
 					v["medium"],
 					v["campaign"],
 					v["term"],
 					v["ref"],
+					v["rcode"],
 					v["aff"],
 					w.Browser,
 					v["device"],
