@@ -47,6 +47,8 @@ RUN bash -c 'echo "net.core.somaxconn = 8192" >> /etc/sysctl.conf' \
 # copy files to other locations
 COPY supervisord.conf /etc/supervisor/supervisord.conf
 COPY tracker.supervisor.homodea.conf /etc/supervisor/conf.d/tracker.supervisor.conf
+COPY .setup/geoip/IP2LOCATION-LITE-DB11.CSV.ZIP /root/tracker/
+COPY .setup/geoip/IP2LOCATION-LITE-DB11.IPV6.CSV.ZIP /root/tracker/
 
 # make startup script executable
 RUN chmod +x dockercmd.homodea.sh
