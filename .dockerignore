@@ -8,7 +8,6 @@ tests/
 pem
 
 # Subfolders
-.setup
 tests
 
 # Extensions
