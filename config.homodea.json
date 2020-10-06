@@ -2,14 +2,24 @@
     "Domains": [
         "staging.homodea.com"
     ],
-    "SchemaVersion": 1,
+    "SchemaVersion": 3,
     "ApiVersion": 1,
+    "TempDirectory": "./tmp/",
+    "UseGeoIP": true,
+    "UseRegionDescriptions": true,
+    "GeoIPVersion": 1,
+    "IPv4GeoIPZip": "./.setup/geoip/IP2LOCATION-LITE-DB11.CSV.ZIP",
+    "IPv6GeoIPZip": "./.setup/geoip/IP2LOCATION-LITE-DB11.IPV6.CSV.ZIP",
+    "IPv4GeoIPCSVDest": "IP2LOCATION-LITE-DB11.CSV",
+    "IPv6GeoIPCSVDest": "IP2LOCATION-LITE-DB11.IPV6.CSV",
     "StaticDirectory": "public",
     "ProxyUrl": "http://localhost:3030",
     "UseLocalTLS": true,
+    "IgnoreInsecureTLS": true,
     "TLSCert" : "pem/tracker.cert.pem",
     "TLSKey" : "pem/tracker.key.pem",
     "ProxyPortTLS" : ":8443",
+    "ProxyPortRedirect" : "",
     "ProxyPort" : ":8080",
     "ProxyDailyLimit" : 0,
     "ProxyDailyLimitChecker" : "cassandra",
@@ -36,13 +46,13 @@
             "Hosts": [
                 "cassandra-seed1"
             ],
-            "Context": "sfpla",
+            "Context": "sfpla3",
             "Timeout" : 30,
             "CACert": "pem/cassandra.cacert.pem",
             "Cert": "pem/cassandra.cert.pem",
             "Key": "pem/cassandra.key.pem",
             "Secure": false,
-            "Retry": false,
+            "Retries": 3,
             "Critical" :true,
             "Filter": [
                 {
