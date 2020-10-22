@@ -47,7 +47,7 @@
                 "cassandra-seed1"
             ],
             "Context": "sfpla3",
-            "Timeout" : 30,
+            "Timeout" : 1000,
             "CACert": "pem/cassandra.cacert.pem",
             "Cert": "pem/cassandra.cert.pem",
             "Key": "pem/cassandra.key.pem",
