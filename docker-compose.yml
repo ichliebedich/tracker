@@ -1,0 +1,30 @@
+
+version: "3.4"
+services:
+  cassandra:
+     image: sfproductlabs/jelass:latest
+     expose:
+       - "9042"
+     ports:
+       - "9042:9042"
+       - "9160:9160"
+       - "9200:9200"
+       - "9300:9300"
+       - "8182:8182"
+     networks: 
+       - default         
+     #network_mode: host  
+     #hostname: cassandra
+     #container_name: cassandra
+     volumes: 
+       - ./.setup:/tmp/.csetup
+     command: >
+              bash -c "((sleep 90s && (cd janusgraph-full-0.5.2; ./bin/gremlin-server.sh ./conf/gremlin-server/gremlin-server-cql-es.yaml; cd ..) &) && (sleep 90s && cqlsh --ssl < /tmp/.csetup/schema.3.cql && cqlsh --ssl < /tmp/.csetup/schema.4.cql &) && (/docker-entrypoint.sh cassandra -f))"
+  nats:
+    image: sfproductlabs/nats:latest
+    ports:
+      - "4222:4222"
+      - "6222:6222"
+      - "8222:8222"
+    networks:
+      - default

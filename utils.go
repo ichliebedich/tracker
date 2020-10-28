@@ -49,10 +49,12 @@
 package main
 
 import (
+	"archive/zip"
 	"crypto/sha1"
 	"encoding/base64"
 	"fmt"
 	"hash/fnv"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -111,6 +113,59 @@ func filterUrlAppendix(s *string) error {
 	return nil
 }
 
+func filterUrlPrefix(s *string) error {
+	if s != nil {
+		*s = strings.ToLower(*s)
+		i := strings.Index(*s, "https://")
+		if i > -1 {
+			*s = (*s)[i+6:]
+			return nil
+		}
+		i = strings.Index(*s, "http://")
+		if i > -1 {
+			*s = (*s)[i+5:]
+		}
+	}
+	return nil
+}
+
+func cleanInterfaceString(i interface{}) error {
+	s := &i
+	if temp, ok := (*s).(string); ok {
+		*s = strings.ToLower(strings.TrimSpace(temp))
+	}
+	return nil
+}
+
+func ensureInterfaceString(i interface{}) error {
+	s := &i
+	if _, ok := (*s).(string); !ok {
+		if s != nil {
+			*s = fmt.Sprintf("%v", *s)
+		}
+	}
+	return nil
+}
+
+func cleanString(s *string) error {
+	if s != nil && *s != "" {
+		*s = strings.ToLower(strings.TrimSpace(*s))
+	}
+	return nil
+}
+
+func upperString(s *string) error {
+	if s != nil && *s != "" {
+		*s = strings.ToUpper(strings.TrimSpace(*s))
+	}
+	return nil
+}
+
+func FixedLengthNumberString(length int, str string) string {
+	verb := fmt.Sprintf("%%%d.%ds", length, length)
+	return strings.Replace(fmt.Sprintf(verb, str), " ", "0", -1)
+}
+
 ////////////////////////////////////////
 // cacheDir in /tmp for SSL
 ////////////////////////////////////////
@@ -129,7 +184,88 @@ func cacheDir() (dir string) {
 func getIP(r *http.Request) string {
 	ip := r.Header.Get("X-Forwarded-For")
 	if ip == "" {
-		ip, _, _ = net.SplitHostPort(r.RemoteAddr)
+		var err error
+		if ip, _, err = net.SplitHostPort(r.RemoteAddr); err != nil {
+			ip = r.RemoteAddr
+		}
 	}
-	return ip
+	return cleanIP(ip)
+}
+
+func cleanIP(ip string) string {
+	ipa := strings.Split(ip, ",")
+	for i := len(ipa) - 1; i > -1; i-- {
+		ipa[i] = strings.TrimSpace(ipa[i])
+		if ipp := net.ParseIP(ipa[i]); ipp != nil {
+			return ipp.String()
+		}
+	}
+	return ""
+}
+
+func getHost(r *http.Request) string {
+	if addr, _, err := net.SplitHostPort(r.Host); err != nil {
+		return r.Host
+	} else {
+		return addr
+	}
+}
+
+func Unzip(src, dest string) error {
+	r, err := zip.OpenReader(src)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err := r.Close(); err != nil {
+			panic(err)
+		}
+	}()
+
+	os.MkdirAll(dest, 0755)
+
+	// Closure to address file descriptors issue with all the deferred .Close() methods
+	extractAndWriteFile := func(f *zip.File) error {
+		rc, err := f.Open()
+		if err != nil {
+			return err
+		}
+		defer func() {
+			if err := rc.Close(); err != nil {
+				panic(err)
+			}
+		}()
+
+		path := filepath.Join(dest, f.Name)
+
+		if f.FileInfo().IsDir() {
+			os.MkdirAll(path, f.Mode())
+		} else {
+			os.MkdirAll(filepath.Dir(path), f.Mode())
+			f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode())
+			if err != nil {
+				return err
+			}
+			defer func() {
+				if err := f.Close(); err != nil {
+					panic(err)
+				}
+			}()
+
+			_, err = io.Copy(f, rc)
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	for _, f := range r.File {
+		err := extractAndWriteFile(f)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
