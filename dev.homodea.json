@@ -1,0 +1,198 @@
+{
+    "Domains": [
+        "tracker",
+        "localhost"
+    ],
+    "SchemaVersion": 3,
+    "ApiVersion": 1,
+    "TempDirectory": "./tmp/",
+    "UseGeoIP": true,
+    "UseRegionDescriptions": true,
+    "GeoIPVersion": 1,
+    "IPv4GeoIPZip": "./.setup/geoip/IP2LOCATION-LITE-DB11.CSV.ZIP",
+    "IPv6GeoIPZip": "./.setup/geoip/IP2LOCATION-LITE-DB11.IPV6.CSV.ZIP",
+    "IPv4GeoIPCSVDest": "IP2LOCATION-LITE-DB11.CSV",
+    "IPv6GeoIPCSVDest": "IP2LOCATION-LITE-DB11.IPV6.CSV",
+    "StaticDirectory": "public",
+    "ProxyUrl": "http://localhost:3030",
+    "UseLocalTLS": true,
+    "IgnoreInsecureTLS": true,
+    "TLSCert" : "pem/tracker.cert.pem",
+    "TLSKey" : "pem/tracker.key.pem",
+    "ProxyPortTLS" : ":8443",
+    "ProxyPortRedirect" : "",
+    "ProxyPort" : ":8080",
+    "ProxyDailyLimit" : 0,
+    "ProxyDailyLimitChecker" : "cassandra",
+    "IgnoreProxyOptions" : false,
+    "ProxyUrlFilter" : ".*(dontlogthese|login|css|js|json|jpeg|jpg|gif|png|ico)",
+    "ProxyForceJson" : false,
+    "MaximumConnections": 2000,
+    "PrefixPrivateHash" : "",
+    "ReadTimeoutSeconds" : 20,
+    "ReadHeaderTimeoutSeconds" : 20,
+    "WriteTimeoutSeconds" : 20,
+    "IdleTimeoutSeconds" : 20,
+    "MaxHeaderBytes" : 1048576,
+    "AllowOrigin": "*",
+    "DefaultRedirect": "https://staging.homodea.com",
+    "Debug" : false,
+    "UrlFilter" : "http(s|)://(api|tr|dev|spark|)(\\.|)(staging\\.homodea\\.com|localhost|tracker)(:[0-9]*|)(/[^\\?#]*)(\\?|#|)",
+    "UrlFilterMatchGroup" : 6,
+    "IgnoreQueryParamsKey" : "igqp",
+    "Notify": [
+        {
+            "Service": "cassandra",
+            "Connections" : 2,
+            "Hosts": [
+                "hdb"
+            ],
+            "Context": "sfpla3",
+            "Timeout" : 1000,
+            "CACert": "pem/cassandra.cacert.pem",
+            "Cert": "pem/cassandra.cert.pem",
+            "Key": "pem/cassandra.key.pem",
+            "Secure": false,
+            "Retries": 3,
+            "Critical" :true,
+            "Filter": [
+                {
+                    "Alias": "log",
+                    "Id": "log",
+                    "Queries": [
+                        {
+                            "Statement": "INSERT INTO logs JSON ?",
+                            "QueryType": "json",
+                            "Fields": [
+                                {
+                                    "Type": "string",
+                                    "Id": "name"
+                                },
+                                {
+                                    "Type": "string",
+                                    "Id": "hostname"
+                                },
+                                {
+                                    "Type": "int",
+                                    "Id": "level"
+                                },
+                                {
+                                    "Type": "string",
+                                    "Id": "msg"
+                                },
+                                {
+                                    "Type": "string",
+                                    "Id": "ip"
+                                },
+                                {
+                                    "Type": "string",
+                                    "Id": "username"
+                                },
+                                {
+                                    "Type": "date",
+                                    "Id": "ldate"
+                                },
+                                {
+                                    "Type": "time",
+                                    "Id": "ltime"
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "Alias": "count",
+                    "Id": "count",
+                    "Queries": [
+                        {
+                            "Statement": "UPDATE counters set total=total+1 where id=? AND type=?",
+                            "Fields": [
+                                {
+                                    "Type": "string",
+                                    "Id": "id"
+                                },
+                                {
+                                    "Type": "string",
+                                    "Id": "type"
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "Alias": "update",
+                    "Id": "update",
+                    "Queries": [
+                        {
+                            "Statement" : "INSERT INTO updates (id, updated, msg) values (?,?,?)",
+                            "Fields": [
+                                {
+                                    "Type": "string",
+                                    "Id": "id",
+                                    "Default": "id"                                    
+                                },
+                                {
+                                    "Type": "datetime",
+                                    "Id": "updated"
+                                },
+                                {
+                                    "Type": "string",
+                                    "Id": "msg"
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "Service": "nats",
+            "Hosts": [
+                "tls://hdb:4222"
+            ],
+            "Context": "toc.track.notify",
+            "Secure": true,
+            "CACert": "pem/nats.cacert.pem",
+            "Cert": "pem/nats.cert.pem",
+            "Key": "pem/nats.key.pem",
+            "Format": "json"
+        }
+    ],
+    "Consume": [
+        {
+            "Service": "http",
+            "Note": "Not implemented"
+        },
+        {
+            "Service": "nats",
+            "Hosts": [
+                "tls://hdb:4222"
+            ],
+            "Secure": true,
+            "Critical" : true,
+            "CACert": "pem/nats.cacert.pem",
+            "Cert": "pem/nats.cert.pem",
+            "Key": "pem/nats.key.pem",
+            "Format": "json",
+            "MessageLimit": 65536,
+            "ByteLimit": 67108864,
+            "Filter": [
+                {
+                    "Alias": "log",
+                    "Type": "chan",
+                    "Id": "tic.log.>"
+                },
+                {
+                    "Alias": "count",
+                    "Type": "chan",
+                    "Id": "tic.count.>"
+                },
+                {
+                    "Alias": "update",
+                    "Type": "chan",
+                    "Id": "tic.update.>"
+                }
+            ]
+        }
+    ]
+}

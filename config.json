@@ -1,5 +1,6 @@
 {
     "Domains": [
+        "tracker",
         "localhost",
         "dev.sfpl.io",
         "tr.sfpl.io",
