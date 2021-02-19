@@ -140,7 +140,8 @@ Since GDPR, honest reporting about user telemetry is required. The default track
 * COOKIE_SESS (sess,sid): The session id. Each time you visit/use the site its approximately broken into session ids.
 * COOKIE_JWT (jwt): The encrypted token of your user. This may optionally include your user id (uid) if logged in.
 
-
+### Pruning Records
+* Run  ```./tracker --prune config.json``` to run privacy pruning.
 ## Credits
 * [DragonGate](https://github.com/dioptre/DragonGate)
 * [SF Product Labs](https://sfproductlabs.com)
@@ -150,3 +151,29 @@ Since GDPR, honest reporting about user telemetry is required. The default track
 * **This project is in production** and has seen significant improvements in revenue for its users.
 * This project is sort of the opposite to my horizontal web scraper in go https://github.com/dioptre/scrp
 
+## Testing
+
+### Testing within ECS docker container
+
+* Make sure Debug in config.json is set to **true**
+* Try running in an ecs instance (`ssh -l ec2-user 172.18.99.1; docker ps; docker exec -it aaa bash;`):
+```bash
+apt install curl procps vim
+
+#Find the process
+ps waux | grep tracker
+#Kill the old tracker process with kill
+#kill 70
+#Replace "Debug" : true (in config.json)
+#Run . /tracker/tracker config.json
+#Do this QUICKLY before the machine is swapped out due to excessive downtime 
+
+#Run your test in another terminal... ssh -l ec2-user 172.18.99.1 (from ecs service) and docker exec -it aa bash
+curl -w "\n" -k -H 'Content-Type: application/json'  -XPOST  "https://localhost:8443/tr/v1/" -d '{"hideFreePlan":"false","name":"Bewusstsein in Aufruhr","newsletter":"bewusstsein-in-aufruhr","static":"%2Fkurs%2Fbewusstsein-in-aufruhr","umleitung":"%2Fkurs%2Fbewusstsein-in-aufruhr","ename":"visited_site","etyp":"session","last":"/einloggen","url":"/registrieren","ptyp":"logged_out_ancillary","sid":"627f7c80-0d7c-11eb-9767-93f1d9c02a9c","first":"true","tz":"America/Los_Angeles","device":"Mac","os":"macOS","w":1331,"h":459,"vid":"627f7c80-0d7c-11eb-9767-93f1d9c02a9c","rel":"1.0.179","app":"hd","params":{"hideFreePlan":"false","name":"Bewusstsein in Aufruhr","newsletter":"bewusstsein-in-aufruhr","static":"%2Fkurs%2Fbewusstsein-in-aufruhr","umleitung":"%2Fkurs%2Fbewusstsein-in-aufruhr","ename":"viewed_page","etyp":"view","last":"/einloggen","url":"/registrieren","ptyp":"logged_out_ancillary","sid":"627f7c80-0d7c-11eb-9767-93f1d9c02a9c","first":"true","tz":"America/Los_Angeles","device":"Mac","os":"macOS","w":1331,"h":459,"vid":"627f7c80-0d7c-11eb-9767-93f1d9c02a9c","rel":"1.0.179","app":"hd","homepageSlogan":"B","homepagePricePlans":"A"}}'
+
+#or check tlv
+curl -w "\n" -k -H 'Content-Type: application/json'  -XPOST  "https://localhost:8443/tlv/v1/" -d '{"vid":"627f7c80-0d7c-11eb-9767-93f1d9c02a9c","uid":"627f7c80-0d7c-11eb-9767-93f1d9c02a9c","sid":"627f7c80-0d7c-11eb-9767-93f1d9c02a9c", "orid":"627f7c80-0d7c-11eb-9767-93f1d9c02a9c", "amt" : 35}'
+
+#or privacy
+curl -w "\n" -k -H 'Content-Type: application/json' -XPOST  "https://localhost:8443/ppi/v1/agree" -d '{"vid": "5ae3c890-5e55-11ea-9283-4fa18a847130", "cflags": 1024}'
+```
