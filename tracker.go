@@ -52,6 +52,7 @@ import (
 	"crypto/tls"
 	"encoding/csv"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -79,6 +80,7 @@ import (
 type session interface {
 	connect() error
 	close() error
+	prune() error
 	write(w *WriteArgs) error
 	listen() error
 	serve(w *http.ResponseWriter, r *http.Request, s *ServiceArgs) error
@@ -90,9 +92,10 @@ type KeyValue struct {
 }
 
 type Field struct {
-	Type    string
-	Id      string
-	Default string
+	Type          string
+	Id            string
+	Default       string
+	DestParamHash string
 }
 
 type Query struct {
@@ -106,6 +109,18 @@ type Filter struct {
 	Alias   string
 	Id      string
 	Queries []Query
+}
+
+type Prune struct {
+	Table              string
+	TTL                int64
+	PageSize           int
+	IgnoreCFlags       []int64
+	SkipToTimestamp    int64
+	ClearAll           bool
+	ClearParams        bool
+	ClearNumericParams bool
+	Fields             []Field
 }
 
 type WriteArgs struct {
@@ -143,6 +158,7 @@ type Service struct {
 
 	Context      string
 	Filter       []Filter
+	Prune        []Prune
 	Format       string
 	MessageLimit int
 	ByteLimit    int
@@ -189,6 +205,7 @@ type Configuration struct {
 	TempDirectory            string
 	UseGeoIP                 bool
 	UseRegionDescriptions    bool
+	UseRemoveIP              bool
 	GeoIPVersion             int
 	IPv4GeoIPZip             string
 	IPv6GeoIPZip             string
@@ -248,6 +265,7 @@ const (
 	WRITE_UPDATE = 1 << iota
 	WRITE_COUNT  = 1 << iota
 	WRITE_EVENT  = 1 << iota
+	WRITE_TLV    = 1 << iota
 
 	WRITE_DESC_LOG    = "log"
 	WRITE_DESC_UPDATE = "update"
@@ -304,8 +322,10 @@ func main() {
 	//////////////////////////////////////// LOAD CONFIG
 	fmt.Println("Starting services...")
 	configFile := "config.json"
-	if len(os.Args) > 1 {
-		configFile = os.Args[1]
+	var prune = flag.Bool("prune", false, "prune items")
+	flag.Parse()
+	if len(flag.Args()) > 0 {
+		configFile = flag.Args()[0]
 	}
 	fmt.Println("Configuration file: ", configFile)
 	file, _ := os.Open(configFile)
@@ -424,6 +444,21 @@ func main() {
 			fmt.Printf("[ERROR] %s #%d Consumer not implemented\n", s.Service, idx)
 		}
 
+	}
+
+	//////////////////////////////////////// LETS JUST PRUNE AND QUIT?
+	if *prune {
+		for idx := range configuration.Notify {
+			s := &configuration.Notify[idx]
+			if s.Session != nil {
+				err := s.Session.prune()
+				if err != nil {
+					fmt.Println("\nLast prune error...\n", err)
+				}
+
+			}
+		}
+		os.Exit(0)
 	}
 
 	//////////////////////////////////////// SSL CERT MANAGER
@@ -628,6 +663,31 @@ func main() {
 
 	})
 
+	//////////////////////////////////////// Track Lifetime Value
+	http.HandleFunc("/tlv/"+apiVersion+"/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodOptions {
+			//Lets just allow requests to this endpoint
+			w.Header().Set("access-control-allow-origin", configuration.AllowOrigin)
+			w.Header().Set("access-control-allow-credentials", "true")
+			w.Header().Set("access-control-allow-headers", "Authorization,Accept,User")
+			w.Header().Set("access-control-allow-methods", "GET,POST,HEAD,PUT,DELETE")
+			w.Header().Set("access-control-max-age", "1728000")
+			w.WriteHeader(http.StatusOK)
+		} else {
+			select {
+			case <-connc:
+				tlv(&configuration, &w, r)
+				w.Header().Set("access-control-allow-origin", configuration.AllowOrigin)
+				w.WriteHeader(http.StatusOK)
+				connc <- struct{}{}
+			default:
+				w.Header().Set("Retry-After", "1")
+				http.Error(w, "Maximum clients reached on this node.", http.StatusServiceUnavailable)
+			}
+		}
+
+	})
+
 	//////////////////////////////////////// Server Tracking Route
 	http.HandleFunc("/str/"+apiVersion+"/", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodOptions {
@@ -771,6 +831,8 @@ func main() {
 			return nil
 		})
 	}
+
+	/// Privacy program interface (cookies)
 	ctr := mux.NewRouter()
 	ctr.HandleFunc("/ppi/"+apiVersion+"/{action}", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodOptions {
@@ -918,7 +980,24 @@ func check(c *Configuration, r *http.Request) error {
 }
 
 ////////////////////////////////////////
-// Trace
+// Total Lifetime Value
+////////////////////////////////////////
+func tlv(c *Configuration, w *http.ResponseWriter, r *http.Request) error {
+	//Setup
+	wargs := WriteArgs{
+		WriteType: WRITE_TLV,
+		IP:        getIP(r),
+		Browser:   r.Header.Get("user-agent"),
+		Language:  r.Header.Get("accept-language"),
+		URI:       r.RequestURI,
+		Host:      getHost(r),
+		EventID:   gocql.TimeUUID(),
+	}
+	return trackWithArgs(c, w, r, &wargs)
+}
+
+////////////////////////////////////////
+// Telemetry
 ////////////////////////////////////////
 func track(c *Configuration, w *http.ResponseWriter, r *http.Request) error {
 	//Setup
@@ -1080,11 +1159,11 @@ func trackWithArgs(c *Configuration, w *http.ResponseWriter, r *http.Request, wa
 			}
 		}
 		if vid, ok := j["vid"].(string); ok {
-			expiration := time.Now().Add(99999 * 24 * time.Hour)
+			expiration := time.Now().UTC().Add(99999 * 24 * time.Hour)
 			cookie := http.Cookie{Name: "vid", Value: vid, Expires: expiration, Path: "/", Domain: dom}
 			http.SetCookie(*w, &cookie)
 		} else if vid, ok := j["vid"].(gocql.UUID); ok {
-			expiration := time.Now().Add(99999 * 24 * time.Hour)
+			expiration := time.Now().UTC().Add(99999 * 24 * time.Hour)
 			cookie := http.Cookie{Name: "vid", Value: vid.String(), Expires: expiration, Path: "/", Domain: dom}
 			http.SetCookie(*w, &cookie)
 		}

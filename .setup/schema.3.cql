@@ -56,6 +56,10 @@ create type payment (
   subtotal double, --what should have been paid (inc-tax)
   total double, --what should have been paid for the whole invoice (inc-tax)
   payment double, --payment = actual amount customer paid
+  currency text, --Ex EUR, USD
+  country text, --iso2 ex. US, DE, AU
+  rcode text, --State ex. CA, BW
+  region text, --State ex. California
   paid timestamp,
 );
 
@@ -121,6 +125,7 @@ create table visitors (
   rel text, --app release/version
   cflags bigint, --compliances represented via N notation == 1001110101111
   created timestamp, --time.Now().UTC() on server
+  updated timestamp, --time.Now().UTC() on server 
   uid timeuuid, --user-id
   last text, --last action/slug/url/referrer_url (what i just clicked on)
   url text, --this should always be url slug of **current** url
@@ -175,6 +180,7 @@ create table sessions (
   rel text, 
   cflags bigint,
   created timestamp, 
+  updated timestamp,
   uid timeuuid, 
   last text, 
   url text, 
@@ -230,6 +236,7 @@ create table events (
   rel text, 
   cflags bigint,
   created timestamp, 
+  updated timestamp,
   uid timeuuid, 
   last text, 
   url text, 
@@ -275,6 +282,7 @@ create table events_recent (
   rel text, 
   cflags bigint,
   created timestamp, 
+  updated timestamp,
   uid timeuuid, 
   last text, 
   url text, 

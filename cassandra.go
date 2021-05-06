@@ -107,7 +107,7 @@ func (i *CassandraService) connect() error {
 	if i.AppConfig.ProxyDailyLimit > 0 && i.AppConfig.ProxyDailyLimitCheck == nil && i.AppConfig.ProxyDailyLimitChecker == SERVICE_TYPE_CASSANDRA {
 		i.AppConfig.ProxyDailyLimitCheck = func(ip string) uint64 {
 			var total uint64
-			if i.Session.Query(`SELECT total FROM dailies where ip=? AND day=?`, ip, time.Now()).Scan(&total); err != nil {
+			if i.Session.Query(`SELECT total FROM dailies where ip=? AND day=?`, ip, time.Now().UTC()).Scan(&total); err != nil {
 				return 0xFFFFFFFFFFFFFFFF
 			}
 			return total
@@ -605,6 +605,125 @@ func (i *CassandraService) serve(w *http.ResponseWriter, r *http.Request, s *Ser
 }
 
 //////////////////////////////////////// C*
+func (i *CassandraService) prune() error {
+	var err error
+	var pageState []byte
+	var iter *gocql.Iter
+	// var row map[string]interface{}
+	for _, p := range i.Configuration.Prune {
+		var pruned = 0
+		var total = 0
+		var pageSize = 5000
+		if p.PageSize > 1 {
+			pageSize = p.PageSize
+		}
+		for {
+			switch p.Table {
+			case "visitors", "sessions", "events", "events_recent":
+				iter = i.Session.Query(fmt.Sprintf(`SELECT * FROM %s`, p.Table)).PageSize(pageSize).PageState(pageState).Iter()
+			default:
+				err = fmt.Errorf("Table %s not supported for pruning", p.Table)
+				break
+			}
+			nextPageState := iter.PageState()
+			for {
+				//TODO: Could optimize with static pointers later
+				// row := map[string]interface{}{
+				// 	"eid": &eid,
+				// 	"ip":  &ip,
+				// }
+				row := make(map[string]interface{})
+				if !iter.MapScan(row) {
+					break
+				}
+				total += 1
+				//CHECK IF ALREADY CLEANED
+				if u, ok := row["updated"].(time.Time); ok {
+					if !u.IsZero() {
+						continue
+					}
+				}
+				//PROCESS THE ROW
+				expired := checkRowExpired(row, p)
+				switch p.Table {
+				case "visitors", "sessions", "events", "events_recent":
+					if expired {
+						pruned += 1
+						var terr error
+						if p.ClearAll {
+							switch p.Table {
+							case "visitors":
+								terr = i.Session.Query(`DELETE from visitors where vid=?`, row["vid"]).Exec()
+							case "sessions":
+								terr = i.Session.Query(`DELETE from sessions where vid=? and sid=?`, row["vid"], row["sid"]).Exec()
+							case "events", "events_recent":
+								terr = i.Session.Query(fmt.Sprintf(`DELETE from %s where eid=?`, p.Table), row["eid"]).Exec()
+							}
+							if i.AppConfig.Debug && terr != nil {
+								fmt.Printf("COULD NOT DELETE RECORD %s %s %s (%s) %v\n", row["vid"], row["sid"], row["eid"], p.Table, terr)
+							}
+							err = terr
+						} else {
+							update := make([]string, 0)
+							desthash := make([]string, 0)
+							var nparams string
+							var params string
+							var dhashes string
+							var fields string
+							for _, f := range p.Fields {
+								update = append(update, fmt.Sprintf("%s=null", f.Id))
+								if v, ok := row[f.Id].(string); ok && (len(f.DestParamHash) > 0) {
+									desthash = append(desthash, fmt.Sprintf(`'%s':'%s'`, f.DestParamHash, sha(v)))
+								}
+							}
+							if len(update) > 0 {
+								fields = ", " + strings.Join(update, ",")
+							}
+							if p.ClearNumericParams {
+								nparams = ", nparams=null "
+							}
+							if len(desthash) > 0 {
+								dhashes = "{" + strings.Join(desthash, ",") + "}"
+								if p.ClearParams {
+									params = ", params=" + dhashes
+								} else {
+									params = ", params=params+" + dhashes
+								}
+							} else if p.ClearParams {
+								params = ", params=null "
+							}
+							switch p.Table {
+							case "visitors":
+								terr = i.Session.Query(fmt.Sprintf(`UPDATE visitors set updated=? %s %s %s where vid=?`, fields, params, nparams), time.Now().UTC(), row["vid"]).Exec()
+							case "sessions":
+								terr = i.Session.Query(fmt.Sprintf(`UPDATE sessions set updated=? %s %s %s where vid=? and sid=?`, fields, params, nparams), time.Now().UTC(), row["vid"], row["sid"]).Exec()
+							case "events", "events_recent":
+								terr = i.Session.Query(fmt.Sprintf(`UPDATE %s set updated=? %s %s %s where eid=?`, p.Table, fields, params, nparams), time.Now().UTC(), row["eid"]).Exec()
+							}
+							if i.AppConfig.Debug && terr != nil {
+								fmt.Printf("COULD NOT CLEAN RECORD %s %s %s (%s) %v\n", row["vid"], row["sid"], row["eid"], p.Table, terr)
+							}
+							err = terr
+
+						}
+					}
+				}
+
+			}
+			//TODO: Optimize Paging
+			//fmt.Printf("next page state: %+v\n", nextPageState)
+			if len(nextPageState) == 0 {
+				break
+			}
+			pageState = nextPageState
+		}
+		fmt.Printf("Pruned [Cassandra].[%s].[%v]: %d/%d rows\n", i.Configuration.Context, p.Table, pruned, total)
+
+	}
+	return err
+}
+
+//////////////////////////////////////// C*
 func (i *CassandraService) write(w *WriteArgs) error {
 	err := fmt.Errorf("Could not write to any cassandra server in cluster")
 	v := *w.Values
@@ -715,7 +834,6 @@ func (i *CassandraService) write(w *WriteArgs) error {
 			level,
 			v["msg"],
 			v["params"]).Exec()
-
 	case WRITE_EVENT:
 		if i.AppConfig.Debug {
 			fmt.Printf("EVENT %s\n", w)
@@ -726,6 +844,7 @@ func (i *CassandraService) write(w *WriteArgs) error {
 		//////////////////////////////////////////////
 		//FIX CASE
 		//////////////////////////////////////////////
+		delete(v, "cleanIP")
 		cleanString(&(w.Browser))
 		cleanString(&(w.Host))
 		cleanInterfaceString(v["app"])
@@ -1133,7 +1252,6 @@ func (i *CassandraService) write(w *WriteArgs) error {
 		if w.EventID.Timestamp() == 0 {
 			w.EventID = gocql.TimeUUID()
 		}
-
 		//[vid] - default
 		isNew := false
 		if vidstring, ok := v["vid"].(string); !ok {
@@ -1147,7 +1265,6 @@ func (i *CassandraService) write(w *WriteArgs) error {
 				isNew = true
 			}
 		}
-
 		//[uid] - let's overwrite the vid if we have a uid
 		if uidstring, ok := v["uid"].(string); ok {
 			tempuid, _ := gocql.ParseUUID(uidstring)
@@ -1156,7 +1273,6 @@ func (i *CassandraService) write(w *WriteArgs) error {
 				isNew = false
 			}
 		}
-
 		//[sid]
 		if sidstring, ok := v["sid"].(string); !ok {
 			if isNew {
@@ -1187,6 +1303,93 @@ func (i *CassandraService) write(w *WriteArgs) error {
 		if xerr := i.Session.Query(`UPDATE routed set url=? where hhash=? AND ip=?`,
 			v["url"], hhash, w.IP).Exec(); xerr != nil && i.AppConfig.Debug {
 			fmt.Println("C*[routed]:", xerr)
+		}
+
+		if xerr := i.Session.Query(`INSERT into events_recent 
+			 (
+				 eid,
+				 vid, 
+				 sid,
+				 hhash, 
+				 app,
+				 rel,
+				 cflags,
+				 created,
+				 uid,
+				 last,
+				 url,
+				 ip,
+				 iphash,
+				 latlon,
+				 ptyp,
+				 bhash,
+				 auth,
+				 duration,
+				 xid,
+				 split,
+				 ename,
+				 source,
+				 medium,
+				 campaign,
+				 country,
+				 region,
+				 city,
+				 zip,
+				 term,
+				 etyp,
+				 ver,
+				 sink,
+				 score,							
+				 params,
+				 nparams,
+				 targets,
+				 rid,
+				 relation
+			 ) 
+			 values (?,?,?,?,?,?,?,?,?,? ,?,?,?,?,?,?,?,?,?,? ,?,?,?,?,?,?,?,?,?,? ,?,?,?,?,?,?,?,?)`, //38
+			w.EventID,
+			v["vid"],
+			v["sid"],
+			hhash,
+			v["app"],
+			v["rel"],
+			cflags,
+			updated,
+			v["uid"],
+			v["last"],
+			v["url"],
+			w.IP,
+			iphash,
+			latlon,
+			v["ptyp"],
+			bhash,
+			auth,
+			duration,
+			v["xid"],
+			v["split"],
+			v["ename"],
+			v["source"],
+			v["medium"],
+			v["campaign"],
+			country,
+			region,
+			city,
+			zip,
+			v["term"],
+			v["etyp"],
+			version,
+			v["sink"],
+			score,
+			params,
+			nparams,
+			v["targets"],
+			rid,
+			v["relation"]).Exec(); xerr != nil && i.AppConfig.Debug {
+			fmt.Println("C*[events_recent]:", xerr)
+		}
+
+		if !i.AppConfig.UseRemoveIP {
+			v["cleanIP"] = w.IP
 		}
 
 		//events
@@ -1243,7 +1446,7 @@ func (i *CassandraService) write(w *WriteArgs) error {
 			v["uid"],
 			v["last"],
 			v["url"],
-			w.IP,
+			v["cleanIP"],
 			iphash,
 			latlon,
 			v["ptyp"],
@@ -1367,7 +1570,6 @@ func (i *CassandraService) write(w *WriteArgs) error {
 		}
 
 		if !w.IsServer {
-
 
 			w.SaveCookie = true
 
@@ -1663,7 +1865,7 @@ func (i *CassandraService) write(w *WriteArgs) error {
 					v["uid"],
 					v["last"],
 					v["url"],
-					w.IP,
+					v["cleanIP"],
 					iphash,
 					latlon,
 					v["ptyp"],
@@ -1767,7 +1969,7 @@ func (i *CassandraService) write(w *WriteArgs) error {
 					v["uid"],
 					v["last"],
 					v["url"],
-					w.IP,
+					v["cleanIP"],
 					iphash,
 					latlon,
 					v["ptyp"],
@@ -1808,6 +2010,356 @@ func (i *CassandraService) write(w *WriteArgs) error {
 				}
 
 			}
+		}
+
+		return nil
+	case WRITE_TLV:
+		cleanString(&(w.Host))
+		//TODO: Add array of payments
+		//////////////////////////////////////////////
+		//FIX VARS
+		//////////////////////////////////////////////
+		//[updated]
+		updated := time.Now().UTC()
+		created := &updated
+
+		//[hhash]
+		var hhash *string
+		if w.Host != "" {
+			temp := strconv.FormatInt(int64(hash(w.Host)), 36)
+			hhash = &temp
+		}
+		//[payment]
+		var pmt *payment
+		pmt = &payment{}
+
+		//UUIDs
+		if iid, ok := v["invid"].(string); ok {
+			if temp, err := gocql.ParseUUID(iid); err == nil {
+				pmt.InvoiceID = &temp
+			}
+		}
+		if pid, ok := v["pid"].(string); ok {
+			if temp, err := gocql.ParseUUID(pid); err == nil {
+				pmt.ProductID = &temp
+			}
+		}
+
+		//Timestamps
+		if invoiced, ok := v["invoiced"].(string); ok {
+			millis, err := strconv.ParseInt(invoiced, 10, 64)
+			if err == nil {
+				temp := time.Unix(0, millis*int64(time.Millisecond)).Truncate(time.Millisecond)
+				pmt.Invoiced = &temp
+			}
+		} else if s, ok := v["invoiced"].(float64); ok {
+			temp := time.Unix(0, int64(s)*int64(time.Millisecond)).Truncate(time.Millisecond)
+			pmt.Invoiced = &temp
+		}
+		if starts, ok := v["starts"].(string); ok {
+			millis, err := strconv.ParseInt(starts, 10, 64)
+			if err == nil {
+				temp := time.Unix(0, millis*int64(time.Millisecond)).Truncate(time.Millisecond)
+				pmt.Starts = &temp
+			}
+		} else if s, ok := v["starts"].(float64); ok {
+			temp := time.Unix(0, int64(s)*int64(time.Millisecond)).Truncate(time.Millisecond)
+			pmt.Starts = &temp
+		}
+		if ends, ok := v["ends"].(string); ok {
+			millis, err := strconv.ParseInt(ends, 10, 64)
+			if err == nil {
+				temp := time.Unix(0, millis*int64(time.Millisecond)).Truncate(time.Millisecond)
+				pmt.Ends = &temp
+			}
+		} else if s, ok := v["ends"].(float64); ok {
+			temp := time.Unix(0, int64(s)*int64(time.Millisecond)).Truncate(time.Millisecond)
+			pmt.Ends = &temp
+		}
+		if paid, ok := v["paid"].(string); ok {
+			millis, err := strconv.ParseInt(paid, 10, 64)
+			if err == nil {
+				temp := time.Unix(0, millis*int64(time.Millisecond)).Truncate(time.Millisecond)
+				pmt.Paid = &temp
+			}
+		} else if s, ok := v["paid"].(float64); ok {
+			temp := time.Unix(0, int64(s)*int64(time.Millisecond)).Truncate(time.Millisecond)
+			pmt.Paid = &temp
+		}
+		if pmt.Paid == nil {
+			//!Force an update on row
+			pmt.Paid = &updated
+		}
+
+		//Strings
+		if temp, ok := v["product"].(string); ok {
+			pmt.Product = &temp
+		}
+		if temp, ok := v["pcat"].(string); ok {
+			pmt.ProductCategory = &temp
+		}
+		if temp, ok := v["man"].(string); ok {
+			pmt.Manufacturer = &temp
+		}
+		if temp, ok := v["model"].(string); ok {
+			pmt.Model = &temp
+		}
+		if temp, ok := v["duration"].(string); ok {
+			pmt.Duration = &temp
+		}
+
+		//Floats
+		var paid *float64
+		if s, ok := v["amt"].(string); ok {
+			if temp, err := strconv.ParseFloat(s, 64); err == nil {
+				paid = &temp
+			}
+
+		} else if s, ok := v["amt"].(float64); ok {
+			paid = &s
+		}
+
+		if qty, ok := v["qty"].(string); ok {
+			if temp, err := strconv.ParseFloat(qty, 64); err == nil {
+				pmt.Quantity = &temp
+			}
+		} else if s, ok := v["qty"].(float64); ok {
+			pmt.Quantity = &s
+		}
+
+		if price, ok := v["price"].(string); ok {
+			if temp, err := strconv.ParseFloat(price, 64); err == nil {
+				pmt.Price = &temp
+			}
+		} else if s, ok := v["price"].(float64); ok {
+			pmt.Price = &s
+		}
+
+		if discount, ok := v["discount"].(string); ok {
+			if temp, err := strconv.ParseFloat(discount, 64); err == nil {
+				pmt.Discount = &temp
+			}
+		} else if s, ok := v["discount"].(float64); ok {
+			pmt.Discount = &s
+		}
+
+		if revenue, ok := v["revenue"].(string); ok {
+			if temp, err := strconv.ParseFloat(revenue, 64); err == nil {
+				pmt.Revenue = &temp
+			}
+		} else if s, ok := v["revenue"].(float64); ok {
+			pmt.Revenue = &s
+		}
+
+		if margin, ok := v["margin"].(string); ok {
+			if temp, err := strconv.ParseFloat(margin, 64); err == nil {
+				pmt.Margin = &temp
+			}
+		} else if s, ok := v["margin"].(float64); ok {
+			pmt.Margin = &s
+		}
+
+		if cost, ok := v["cost"].(string); ok {
+			if temp, err := strconv.ParseFloat(cost, 64); err == nil {
+				pmt.Cost = &temp
+			}
+		} else if s, ok := v["cost"].(float64); ok {
+			pmt.Cost = &s
+		}
+
+		if tax, ok := v["tax"].(string); ok {
+			if temp, err := strconv.ParseFloat(tax, 64); err == nil {
+				pmt.Tax = &temp
+			}
+		} else if s, ok := v["tax"].(float64); ok {
+			pmt.Tax = &s
+		}
+
+		if taxrate, ok := v["tax_rate"].(string); ok {
+			if temp, err := strconv.ParseFloat(taxrate, 64); err == nil {
+				pmt.TaxRate = &temp
+			}
+		} else if s, ok := v["tax_rate"].(float64); ok {
+			pmt.TaxRate = &s
+		}
+
+		if commission, ok := v["commission"].(string); ok {
+			if temp, err := strconv.ParseFloat(commission, 64); err == nil {
+				pmt.Commission = &temp
+			}
+		} else if s, ok := v["commission"].(float64); ok {
+			pmt.Commission = &s
+		}
+
+		if referral, ok := v["referral"].(string); ok {
+			if temp, err := strconv.ParseFloat(referral, 64); err == nil {
+				pmt.Referral = &temp
+			}
+		} else if s, ok := v["referral"].(float64); ok {
+			pmt.Referral = &s
+		}
+
+		if fees, ok := v["fees"].(string); ok {
+			if temp, err := strconv.ParseFloat(fees, 64); err == nil {
+				pmt.Fees = &temp
+			}
+		} else if s, ok := v["fees"].(float64); ok {
+			pmt.Fees = &s
+		}
+
+		if subtotal, ok := v["subtotal"].(string); ok {
+			if temp, err := strconv.ParseFloat(subtotal, 64); err == nil {
+				pmt.Subtotal = &temp
+			}
+		} else if s, ok := v["subtotal"].(float64); ok {
+			pmt.Subtotal = &s
+		}
+
+		if total, ok := v["total"].(string); ok {
+			if temp, err := strconv.ParseFloat(total, 64); err == nil {
+				pmt.Total = &temp
+			}
+		} else if s, ok := v["total"].(float64); ok {
+			pmt.Total = &s
+		}
+
+		if payment, ok := v["payment"].(string); ok {
+			if temp, err := strconv.ParseFloat(payment, 64); err == nil {
+				pmt.Payment = &temp
+			}
+		} else if s, ok := v["payment"].(float64); ok {
+			pmt.Payment = &s
+		}
+		//!Force an amount in the payment
+		if pmt.Payment == nil {
+			pmt.Payment = paid
+		}
+
+		var pmts []payment
+		var prevpaid *float64
+		//[TLV]
+		if xerr := i.Session.Query("SELECT payments,created,paid FROM tlv WHERE hhash=? AND uid=?", hhash, v["uid"]).Scan(&pmts, &created, &prevpaid); xerr != nil && i.AppConfig.Debug {
+			fmt.Println("C*[tlv]:", xerr)
+		}
+		if prevpaid != nil && paid != nil {
+			*prevpaid = *prevpaid + *paid
+		} else {
+			prevpaid = paid
+		}
+
+		pmts = append(pmts, *pmt)
+
+		if xerr := i.Session.Query(`UPDATE tlv SET
+			vid = ?, 
+			sid = ?,
+			payments = ?, 
+			paid = ?,
+			org = ?,
+			updated = ?,
+			updater = ?,
+			created = ?,
+			owner = ?
+			WHERE hhash=? AND uid=?`, //11
+			v["vid"],
+			v["sid"],
+			pmts,
+			prevpaid,
+			v["org"],
+			updated,
+			v["uid"],
+			created,
+			v["uid"],
+
+			hhash,
+			v["uid"],
+		).Exec(); xerr != nil && i.AppConfig.Debug {
+			fmt.Println("C*[tlv]:", xerr)
+		}
+
+		//[TLVU]
+		pmts = pmts[:0]
+		created = &updated
+		prevpaid = nil
+		if xerr := i.Session.Query("SELECT payments,created,paid FROM tlvu WHERE hhash=? AND uid=? AND orid=?", hhash, v["uid"], v["orid"]).Scan(&pmts, &created, &prevpaid); xerr != nil && i.AppConfig.Debug {
+			fmt.Println("C*[tlvu]:", xerr)
+		}
+		if prevpaid != nil && paid != nil {
+			*prevpaid = *prevpaid + *paid
+		} else {
+			prevpaid = paid
+		}
+
+		pmts = append(pmts, *pmt)
+
+		if xerr := i.Session.Query(`UPDATE tlvu SET
+			vid = ?, 
+			sid = ?,
+			payments = ?, 
+			paid = ?,
+			org = ?,
+			updated = ?,
+			updater = ?,
+			created = ?,
+			owner = ?
+			WHERE hhash=? AND uid=? AND orid = ?`, //11
+			v["vid"],
+			v["sid"],
+			pmts,
+			prevpaid,
+			v["org"],
+			updated,
+			v["uid"],
+			created,
+			v["uid"],
+
+			hhash,
+			v["uid"],
+			v["orid"],
+		).Exec(); xerr != nil && i.AppConfig.Debug {
+			fmt.Println("C*[tlvu]:", xerr)
+		}
+
+		//[TLVV]
+		pmts = pmts[:0]
+		created = &updated
+		prevpaid = nil
+		if xerr := i.Session.Query("SELECT payments,created,paid FROM tlvv WHERE hhash=? AND vid=? AND orid=?", hhash, v["vid"], v["orid"]).Scan(&pmts, &created, &prevpaid); xerr != nil && i.AppConfig.Debug {
+			fmt.Println("C*[tlvv]:", xerr)
+		}
+		if prevpaid != nil && paid != nil {
+			*prevpaid = *prevpaid + *paid
+		} else {
+			prevpaid = paid
+		}
+
+		pmts = append(pmts, *pmt)
+
+		if xerr := i.Session.Query(`UPDATE tlvv SET
+			uid = ?, 
+			sid = ?,
+			payments = ?, 
+			paid = ?,
+			org = ?,
+			updated = ?,
+			updater = ?,
+			created = ?,
+			owner = ?
+			WHERE hhash=? AND vid=? AND orid = ?`, //11
+			v["uid"],
+			v["sid"],
+			pmts,
+			prevpaid,
+			v["org"],
+			updated,
+			v["uid"],
+			created,
+			v["uid"],
+
+			hhash,
+			v["vid"],
+			v["orid"],
+		).Exec(); xerr != nil && i.AppConfig.Debug {
+			fmt.Println("C*[tlvv]:", xerr)
 		}
 
 		return nil
