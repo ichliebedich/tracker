@@ -57,10 +57,60 @@
             "Critical" :true,
             "Prune": [
                 {
+                    "Table": "visitors",
+                    "TTL": 2592000,
+                    "PageSize": 10000,
+                    "IgnoreCFlags": [4096],
+                    "SkipToTimestamp": 0,
+                    "ClearAll": false,
+                    "ClearParams" : true,
+                    "ClearNumericParams": true,
+                    "Fields": [
+                        {
+                            "Id": "ip",
+                            "Type": "inet",
+                            "DestParamHash": "iphash"                    
+                        }
+                    ]
+                },
+                {
+                    "Table": "sessions",
+                    "TTL": 2592000,
+                    "PageSize": 10000,
+                    "IgnoreCFlags": [4096],
+                    "SkipToTimestamp": 0,
+                    "ClearAll": false,
+                    "ClearParams" : true,
+                    "ClearNumericParams": true,
+                    "Fields": [
+                        {
+                            "Id": "ip",
+                            "Type": "inet",
+                            "DestParamHash": "iphash"                    
+                        }
+                    ]
+                },{
                     "Table": "events",
                     "TTL": 2592000,
                     "PageSize": 10000,
-                    "IgnoreCFlags": [],
+                    "IgnoreCFlags": [4096],
+                    "SkipToTimestamp": 0,
+                    "ClearAll": false,
+                    "ClearParams" : true,
+                    "ClearNumericParams": true,
+                    "Fields": [
+                        {
+                            "Id": "ip",
+                            "Type": "inet",
+                            "DestParamHash": "iphash"                    
+                        }
+                    ]
+                },
+                {
+                    "Table": "events_recent",
+                    "TTL": 2592000,
+                    "PageSize": 10000,
+                    "IgnoreCFlags": [4096],
                     "SkipToTimestamp": 0,
                     "ClearAll": false,
                     "ClearParams" : true,
