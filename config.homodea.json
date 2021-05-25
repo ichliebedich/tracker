@@ -39,6 +39,7 @@
     "UrlFilter" : "http(s|)://(api|tr|dev|spark|)(\\.|)(staging\\.homodea\\.com|localhost)(:[0-9]*|)(/[^\\?#]*)(\\?|#|)",
     "UrlFilterMatchGroup" : 6,
     "IgnoreQueryParamsKey" : "igqp",
+    "LogsTTL": 2592000,
     "Notify": [
         {
             "Service": "cassandra",
@@ -54,6 +55,25 @@
             "Secure": false,
             "Retries": 3,
             "Critical" :true,
+            "Prune": [
+                {
+                    "Table": "events",
+                    "TTL": 2592000,
+                    "PageSize": 10000,
+                    "IgnoreCFlags": [],
+                    "SkipToTimestamp": 0,
+                    "ClearAll": false,
+                    "ClearParams" : true,
+                    "ClearNumericParams": true,
+                    "Fields": [
+                        {
+                            "Id": "ip",
+                            "Type": "inet",
+                            "DestParamHash": "iphash"                    
+                        }
+                    ]
+                }
+            ],
             "Filter": [
                 {
                     "Alias": "log",
