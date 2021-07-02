@@ -49,6 +49,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -607,146 +608,169 @@ func (i *CassandraService) serve(w *http.ResponseWriter, r *http.Request, s *Ser
 
 //////////////////////////////////////// C*
 func (i *CassandraService) prune() error {
-	var err error
 	var pageState []byte
+	var lastCreated time.Time
 	var iter *gocql.Iter
 	defer i.Session.Close()
+	keyspaceMetadata, err := i.Session.KeyspaceMetadata(i.Configuration.Context)
 	ctx := context.Background()
 
 	b := i.Session.NewBatch(gocql.UnloggedBatch).WithContext(ctx)
 	// var row map[string]interface{}
-	for _, p := range i.Configuration.Prune {
-		var pruned = 0
-		var total = 0
-		var pageSize = 5000
-		if p.PageSize > 1 {
-			pageSize = p.PageSize
-		}
-		for {
-			switch p.Table {
-			case "visitors", "sessions", "events", "events_recent":
-				iter = i.Session.Query(fmt.Sprintf(`SELECT * FROM %s`, p.Table)).PageSize(pageSize).PageState(pageState).Iter()
-			default:
-				err = fmt.Errorf("Table %s not supported for pruning", p.Table)
-				break
+	if !i.AppConfig.PruneLogsOnly {
+		for _, p := range i.Configuration.Prune {
+			var pruned = 0
+			var total = 0
+			var pageSize = 5000
+			if p.PageSize > 1 {
+				pageSize = p.PageSize
 			}
-			nextPageState := iter.PageState()
 			for {
-				//TODO: Could optimize with static pointers later
-				// row := map[string]interface{}{
-				// 	"eid": &eid,
-				// 	"ip":  &ip,
-				// }
-				row := make(map[string]interface{})
-				if !iter.MapScan(row) {
-					break
-				}
-				total += 1
-				//CHECK IF ALREADY CLEANED
-				if u, ok := row["updated"].(time.Time); ok {
-					if !u.IsZero() {
-						continue
-					}
-				}
-				//PROCESS THE ROW
-				expired := checkRowExpired(row, p)
 				switch p.Table {
 				case "visitors", "sessions", "events", "events_recent":
-					if expired {
-						pruned += 1
+					iter = i.Session.Query(fmt.Sprintf(`SELECT * FROM %s`, p.Table)).PageSize(pageSize).PageState(pageState).Iter()
+				default:
+					err = fmt.Errorf("Table %s not supported for pruning", p.Table)
+					break
+				}
+				nextPageState := iter.PageState()
+				for {
+					//TODO: Could optimize with static pointers later
+					// row := map[string]interface{}{
+					// 	"eid": &eid,
+					// 	"ip":  &ip,
+					// }
+					row := make(map[string]interface{})
+					if !iter.MapScan(row) {
+						break
+					}
+					total += 1
+					//CHECK IF ALREADY CLEANED
+					if u, ok := row["updated"].(time.Time); ok {
+						if !u.IsZero() {
+							continue
+						}
+					}
+					//PROCESS THE ROW
+					expired, created := checkRowExpired(row, keyspaceMetadata.Tables[p.Table], p, i.AppConfig.PruneSkipToTimestamp)
+					switch p.Table {
+					case "visitors", "sessions", "events", "events_recent":
+						if expired {
+							pruned += 1
+							if created.After(lastCreated) {
+								lastCreated = *created
+							}
 
-						if p.ClearAll {
-							switch p.Table {
-							case "visitors":
-								b.Entries = append(b.Entries, gocql.BatchEntry{
-									Stmt:       `DELETE from visitors where vid=?`,
-									Args:       []interface{}{row["vid"]},
-									Idempotent: true,
-								})
-							case "sessions":
-								b.Entries = append(b.Entries, gocql.BatchEntry{
-									Stmt:       `DELETE from sessions where vid=? and sid=?`,
-									Args:       []interface{}{row["vid"], row["sid"]},
-									Idempotent: true,
-								})
-							case "events", "events_recent":
-								b.Entries = append(b.Entries, gocql.BatchEntry{
-									Stmt:       fmt.Sprintf(`DELETE from %s where eid=?`, p.Table),
-									Args:       []interface{}{row["eid"]},
-									Idempotent: true,
-								})
-							}
-						} else {
-							update := make([]string, 0)
-							desthash := make([]string, 0)
-							var nparams string
-							var params string
-							var dhashes string
-							var fields string
-							for _, f := range p.Fields {
-								update = append(update, fmt.Sprintf("%s=null", f.Id))
-								if v, ok := row[f.Id].(string); ok && (len(f.DestParamHash) > 0) {
-									desthash = append(desthash, fmt.Sprintf(`'%s':'%s'`, f.DestParamHash, sha(v)))
+							if p.ClearAll {
+								switch p.Table {
+								case "visitors":
+									b.Entries = append(b.Entries, gocql.BatchEntry{
+										Stmt:       `DELETE from visitors where vid=?`,
+										Args:       []interface{}{row["vid"]},
+										Idempotent: true,
+									})
+								case "sessions":
+									b.Entries = append(b.Entries, gocql.BatchEntry{
+										Stmt:       `DELETE from sessions where vid=? and sid=?`,
+										Args:       []interface{}{row["vid"], row["sid"]},
+										Idempotent: true,
+									})
+								case "events", "events_recent":
+									b.Entries = append(b.Entries, gocql.BatchEntry{
+										Stmt:       fmt.Sprintf(`DELETE from %s where eid=?`, p.Table),
+										Args:       []interface{}{row["eid"]},
+										Idempotent: true,
+									})
 								}
-							}
-							if len(update) > 0 {
-								fields = ", " + strings.Join(update, ",")
-							}
-							if p.ClearNumericParams {
-								nparams = ", nparams=null "
-							}
-							if len(desthash) > 0 {
-								dhashes = "{" + strings.Join(desthash, ",") + "}"
-								if p.ClearParams {
-									params = ", params=" + dhashes
-								} else {
-									params = ", params=params+" + dhashes
+							} else {
+								update := make([]string, 0)
+								desthash := make([]string, 0)
+								var nparams string
+								var params string
+								var dhashes string
+								var fields string
+								for _, f := range p.Fields {
+									update = append(update, fmt.Sprintf("%s=null", f.Id))
+									if v, ok := row[f.Id].(string); ok && (len(f.DestParamHash) > 0) {
+										desthash = append(desthash, fmt.Sprintf(`'%s':'%s'`, f.DestParamHash, sha(v)))
+									}
 								}
-							} else if p.ClearParams {
-								params = ", params=null "
-							}
-							switch p.Table {
-							case "visitors":
-								b.Entries = append(b.Entries, gocql.BatchEntry{
-									Stmt:       fmt.Sprintf(`UPDATE visitors set updated=? %s %s %s where vid=?`, fields, params, nparams),
-									Args:       []interface{}{time.Now().UTC(), row["vid"]},
-									Idempotent: true,
-								})
-							case "sessions":
-								b.Entries = append(b.Entries, gocql.BatchEntry{
-									Stmt:       fmt.Sprintf(`UPDATE sessions set updated=? %s %s %s where vid=? and sid=?`, fields, params, nparams),
-									Args:       []interface{}{time.Now().UTC(), row["vid"], row["sid"]},
-									Idempotent: true,
-								})
-							case "events", "events_recent":
-								b.Entries = append(b.Entries, gocql.BatchEntry{
-									Stmt:       fmt.Sprintf(`UPDATE %s set updated=? %s %s %s where eid=?`, p.Table, fields, params, nparams),
-									Args:       []interface{}{time.Now().UTC(), row["eid"]},
-									Idempotent: true,
-								})
+								if len(update) > 0 {
+									fields = ", " + strings.Join(update, ",")
+								}
+								if p.ClearNumericParams {
+									nparams = ", nparams=null "
+								}
+								if len(desthash) > 0 {
+									dhashes = "{" + strings.Join(desthash, ",") + "}"
+									if p.ClearParams {
+										params = ", params=" + dhashes
+									} else {
+										params = ", params=params+" + dhashes
+									}
+								} else if p.ClearParams {
+									params = ", params=null "
+								}
+								switch p.Table {
+								case "visitors":
+									b.Entries = append(b.Entries, gocql.BatchEntry{
+										Stmt:       fmt.Sprintf(`UPDATE visitors set updated=? %s %s %s where vid=?`, fields, params, nparams),
+										Args:       []interface{}{time.Now().UTC(), row["vid"]},
+										Idempotent: true,
+									})
+								case "sessions":
+									b.Entries = append(b.Entries, gocql.BatchEntry{
+										Stmt:       fmt.Sprintf(`UPDATE sessions set updated=? %s %s %s where vid=? and sid=?`, fields, params, nparams),
+										Args:       []interface{}{time.Now().UTC(), row["vid"], row["sid"]},
+										Idempotent: true,
+									})
+								case "events", "events_recent":
+									b.Entries = append(b.Entries, gocql.BatchEntry{
+										Stmt:       fmt.Sprintf(`UPDATE %s set updated=? %s %s %s where eid=?`, p.Table, fields, params, nparams),
+										Args:       []interface{}{time.Now().UTC(), row["eid"]},
+										Idempotent: true,
+									})
+								}
 							}
 						}
 					}
+
 				}
+				fmt.Printf("Processed %d rows\n", total)
+				terr := i.Session.ExecuteBatch(b)
+				if terr != nil && err == nil {
+					err = terr
+				}
+				if i.AppConfig.PruneLimit != 0 && i.AppConfig.PruneLimit > total {
+					break
+				}
+				if i.AppConfig.Debug && terr != nil {
+					fmt.Printf("[[WARNING]] COULD NOT CLEAN ALL RECORDS FOR [%s] %v\n", p.Table, terr)
+				}
+				//TODO: Optimize Paging
+				//fmt.Printf("next page state: %+v\n", nextPageState)
+				if len(nextPageState) == 0 {
+					break
+				}
+				pageState = nextPageState
+			}
+			fmt.Printf("Pruned [Cassandra].[%s].[%v]: %d/%d rows\n", i.Configuration.Context, p.Table, pruned, total)
 
-			}
-			fmt.Printf("Processed %d rows\n", total)
-			terr := i.Session.ExecuteBatch(b)
-			if terr != nil && err == nil {
-				err = terr
-			}
-			if i.AppConfig.Debug && terr != nil {
-				fmt.Printf("[[WARNING]] COULD NOT CLEAN ALL RECORDS FOR [%s] %v\n", p.Table, terr)
-			}
-			//TODO: Optimize Paging
-			//fmt.Printf("next page state: %+v\n", nextPageState)
-			if len(nextPageState) == 0 {
-				break
-			}
-			pageState = nextPageState
 		}
-		fmt.Printf("Pruned [Cassandra].[%s].[%v]: %d/%d rows\n", i.Configuration.Context, p.Table, pruned, total)
+	}
 
+	if i.AppConfig.PruneUpdateConfig && lastCreated.Unix() > i.AppConfig.PruneSkipToTimestamp {
+		s, error := ioutil.ReadFile(i.AppConfig.ConfigFile)
+		var j interface{}
+		json.Unmarshal(s, &j)
+		SetValueInJSON(j, "PruneSkipToTimestamp", lastCreated.Unix())
+		s, _ = json.Marshal(j)
+		var prettyJSON bytes.Buffer
+		error = json.Indent(&prettyJSON, s, "", "    ")
+		if error == nil {
+			//fmt.Println(prettyJSON.String())
+			ioutil.WriteFile(i.AppConfig.ConfigFile, prettyJSON.Bytes(), 0644)
+		}
 	}
 
 	//Now Prune the LOGS table
@@ -754,8 +778,8 @@ func (i *CassandraService) prune() error {
 	var total = 0
 	var pageSize = 10000
 	ttl := 2592000
-	if i.AppConfig.LogsTTL > 0 {
-		ttl = i.AppConfig.LogsTTL
+	if i.AppConfig.PruneLogsTTL > 0 {
+		ttl = i.AppConfig.PruneLogsTTL
 	}
 	for {
 		iter = i.Session.Query(`SELECT id FROM logs`).PageSize(pageSize).PageState(pageState).Iter()
