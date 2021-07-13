@@ -42,6 +42,7 @@
     "Debug": true,
     "DefaultRedirect": "https://sfpl.io",
     "Domains": [
+        "tracker",
         "localhost",
         "dev.sfpl.io",
         "tr.sfpl.io",

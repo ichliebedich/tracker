@@ -3,28 +3,20 @@
 # Build with: sudo docker build -t tracker .
 ####################################################################################
 
-FROM debian:latest
+FROM golang:1.12.17-stretch
 EXPOSE 8443 8080 443 80
 
 # update packages and install required ones
 RUN apt update && apt upgrade -y && apt install -y \
-#  golang \
-#  git \
-#  libssl-dev \
-#  python-pip \
+  git \
+  libssl-dev \
+  python-pip \
   dnsutils \
   jq \
   netcat \
-  && apt autoclean -y \
-  && apt autoremove -y
-
-# apt cleanup
-# RUN apt autoclean -y && apt autoremove -y
-
-# build app instead of just publishing
-# RUN go get github.com/dioptre/tracker
-# RUN go install github.com/dioptre/tracker
-# RUN go build
+  sudo
+  # && apt autoclean -y \
+  # && apt autoremove -y
 
 
 ####################################################################################
@@ -52,6 +44,13 @@ RUN bash -c 'echo "net.core.somaxconn = 8192" >> /etc/sysctl.conf' \
 WORKDIR /app/tracker
 ADD . /app/tracker
 RUN bash -c 'rm /app/tracker/temp.config.json || exit 0'
+RUN mkdir -p /root/.ssh
+RUN ssh-keyscan -t rsa github.com >> ~/.ssh/known_hosts
+# build app instead of just publishing
+RUN git config --global url.https://github.com/:.insteadOf git@github.com
+RUN go get github.com/sfproductlabs/tracker
+RUN go install github.com/sfproductlabs/tracker
+RUN go build
 
 ####################################################################################
 

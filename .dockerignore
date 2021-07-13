@@ -11,11 +11,12 @@ pem
 tests
 
 # Extensions
-*.go
+#*.go
 *.log
 
 # Docker files
 Dockerfile
+Dockerfile.dev
 Dockerfile.deploy
 Dockerfile.homodea
 .dockerignore
